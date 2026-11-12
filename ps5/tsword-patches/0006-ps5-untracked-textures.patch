@@ -1,0 +1,99 @@
+diff --git a/runtime/vk_texture.c b/runtime/vk_texture.c
+index 68b5a9b..2dbe3d1 100644
+--- a/runtime/vk_texture.c
++++ b/runtime/vk_texture.c
+@@ -68,6 +68,8 @@ typedef struct Tex {
+     uint64_t use_seq;             // order of the last creation or take-back among all entries
+     uint64_t rel_seq;             // while released: use_seq of the newest entry placed before this release; an entry
+                                   // with a later use_seq on overlapping storage replaced this one's bytes
++    uint64_t chash;               // untracked storage: the content hash of the storage at the last upload or check
++    uint8_t chash_ok;             // chash holds one
+ } Tex;
+ 
+ // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
+@@ -1245,12 +1247,58 @@ static int storage_rewritten(const Tex *e, uint32_t since, uint32_t *now) {
+     return 0;
+ }
+ 
++// Storage the platform does not write-watch (the PS5: plat_mem_written answers untracked) has no page generations, so
++// "not tracked" used to mean "upload again" at every check: every ASTC texture a frame bound was decoded again each
++// submission (the title screen at 0.1 fps, 8 s of ASTC decodes a frame). There the storage's own bytes decide: a hash of
++// all of them, taken before an upload reads them and again at each check (once a submission at most: e->checked), and
++// a different hash uploads again. A write between the hash and the upload's read only costs one more upload later.
++static uint64_t storage_hash(const Tex *e) {
++    const uint8_t *p = (const uint8_t *)(uintptr_t)e->pub.addr;
++    uint64_t n = e->t.L.size, a = 0x9e3779b97f4a7c15ull ^ n, b = 0xc2b2ae3d27d4eb4full, c = 0x165667b19e3779f9ull,
++             d = 0x27d4eb2f165667c5ull;
++    const uint64_t K = 0xff51afd7ed558ccdull;
++#define TEX_MIX(h, w) (h = (h ^ (w)) * K, h = (h << 31) | (h >> 33))
++    for (; n >= 32; p += 32, n -= 32) {   // four independent lanes: the multiplies overlap
++        uint64_t w[4];
++        memcpy(w, p, 32);
++        TEX_MIX(a, w[0]), TEX_MIX(b, w[1]), TEX_MIX(c, w[2]), TEX_MIX(d, w[3]);
++    }
++    for (; n >= 8; p += 8, n -= 8) {
++        uint64_t w;
++        memcpy(&w, p, 8);
++        TEX_MIX(a, w);
++    }
++    if (n) {
++        uint64_t w = 0;
++        memcpy(&w, p, n);
++        TEX_MIX(b, w);
++    }
++#undef TEX_MIX
++    uint64_t h = a ^ (b * 0xc4ceb9fe1a85ec53ull) ^ (c * K) ^ (d * 0x9e3779b97f4a7c15ull);
++    h ^= h >> 33, h *= 0xc4ceb9fe1a85ec53ull, h ^= h >> 33;
++    return h;
++}
++
++// ch from the write watch; -1 (untracked): whether the storage's bytes differ from the last hash, which is updated.
++static int content_check(Tex *e, int ch) {
++    if (ch >= 0) {
++        e->chash_ok = 0;   // (tracked: the hash would be stale if the watch ever stops answering)
++        return ch;
++    }
++    uint64_t h = storage_hash(e);
++    int changed = !e->chash_ok || h != e->chash;
++    e->chash = h, e->chash_ok = 1;
++    return changed;
++}
++
+ // A mirrored texture is uploaded on first use and again when its storage pages carry a newer write generation.
+ static void make_fresh(Tex *e) {
+     if (!e->pub.mirrored || e->pub.gpu_owned) return;
+     uint64_t size = e->t.L.size;
+     if (!e->uploaded) {
+-        vk_mem_changed(e->pub.addr, size, 0, &e->wgen);   // resets the write bits before the storage is read
++        int c0 = vk_mem_changed(e->pub.addr, size, 0, &e->wgen);   // resets the write bits before the storage is read
++        e->chash_ok = 0;
++        if (c0 < 0) content_check(e, c0);   // the hash of what the upload reads
+         upload(e);
+         return;
+     }
+@@ -1258,7 +1306,7 @@ static void make_fresh(Tex *e) {
+     int ch = vk_mem_changed(e->pub.addr, size, e->wgen, &now);
+     e->wgen = now;
+     e->last_ch = ch;
+-    if (ch) upload(e);   // 1 written, -1 not tracked: both upload again
++    if (content_check(e, ch)) upload(e);   // 1 written, -1 not tracked: the content decides
+ }
+ 
+ // make_fresh for draw bindings: the page check answers from this submission's write-watch snapshot (vk_memory.c
+@@ -1270,9 +1318,14 @@ static void make_fresh_snap(Tex *e) {
+     n_checks++;
+     int ch = vk_mem_changed_snap(e->pub.addr, e->t.L.size, e->uploaded ? e->wgen : 0, submit_epoch, &now);
+     e->wgen = now;
+-    if (!e->uploaded) { upload(e); return; }
++    if (!e->uploaded) {
++        e->chash_ok = 0;
++        if (ch < 0) content_check(e, ch);   // the hash of what the upload reads
++        upload(e);
++        return;
++    }
+     e->last_ch = ch;
+-    if (ch) upload(e);
++    if (content_check(e, ch)) upload(e);
+ }
+ 
+ // ---------------------------------------------------------------- aliases (TOTK_TEX_ALIAS)
