@@ -58,7 +58,7 @@ bind_flags=""
 echo "build.sh: bound to the platform layer: $(echo $bound)"
 wrap_flags=""
 for name in $cwd_wraps; do wrap_flags+=" --wrap=$name"; done
-export LINK_EXTRA_FLAGS="--wrap=main --wrap=exit --wrap=_exit --wrap=_Exit --wrap=atexit$wrap_flags$bind_flags --version-script $work/platform-local.map"
+export LINK_EXTRA_FLAGS="--wrap=main --wrap=exit --wrap=_exit --wrap=_Exit --wrap=atexit$wrap_flags -z nostart-stop-gc -T $ps5/tsword/sections.ld$bind_flags --version-script $work/platform-local.map"
 trap '[[ -f $work/link/llvm-pie.elf ]] && "$(command -v llvm-readelf-18 || command -v llvm-readelf || echo readelf)" -lSW "$work/link/llvm-pie.elf" | grep -vE "^\s*$" | head -120' ERR
 bash "$ps5/tools/link-title.sh" "$work" "$vulkan" "$sdk" \
     --whole-archive "$lib" --no-whole-archive \

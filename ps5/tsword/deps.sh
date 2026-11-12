@@ -61,8 +61,9 @@ if [[ ! -f $P/lib/libzstd.a ]]; then
     fetch https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz \
         eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3 zstd-1.5.7.tar.gz
     unpack zstd-1.5.7.tar.gz zstd
+    # (ZSTD_TRACE=0: no weak tracing hooks, which the title's link would bind to null)
     cmake -S "$W/zstd/build/cmake" -B "$W/zstd/out" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TC" -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_FLAGS="-march=znver2" -DCMAKE_INSTALL_PREFIX="$P" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON \
+        -DCMAKE_C_FLAGS="-march=znver2 -DZSTD_TRACE=0" -DCMAKE_INSTALL_PREFIX="$P" -DZSTD_BUILD_SHARED=OFF -DZSTD_BUILD_STATIC=ON \
         -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_MULTITHREAD_SUPPORT=ON \
         > "$W/zstd.configure.log" 2>&1 || { tail -40 "$W/zstd.configure.log"; exit 1; }
     cmake --build "$W/zstd/out" -j"$JOBS" > "$W/zstd.build.log" 2>&1 || { grep -E "error|FAILED" "$W/zstd.build.log" | head -30; exit 1; }
