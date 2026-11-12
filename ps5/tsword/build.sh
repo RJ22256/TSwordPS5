@@ -23,6 +23,19 @@ python3 "$ps5/tsword/configure.py" --sdk "$sdk" --deps "$deps" --out "$out"
 "$ninja" -C "$out"
 
 mkdir -p "$work"
+# Names the runtime and RADV both define (Mesa's common Vulkan runtime is vk_*: vk_sync_finish, as the runtime's
+# vk_sync.c): the runtime's renamed, in its own archive's copy, to tsword_<name> - its calls follow, RADV keeps its own
+radv_archive=$(find "$vulkan/.deps/native/radv-release/lib" -name 'libvulkan_radeon*.a' | head -1)
+lib=$work/libtsword-linked.a
+cp "$out/libtsword.a" "$lib"
+comm -12 <("$sdk/bin/llvm-nm" --defined-only -g "$out/libtsword.a" 2>/dev/null | awk 'NF == 3 && $2 ~ /[TDBRVW]/ { print $3 }' | sort -u) \
+         <("$sdk/bin/llvm-nm" --defined-only -g "$radv_archive" 2>/dev/null | awk 'NF == 3 && $2 ~ /[TDBRVW]/ { print $3 }' | sort -u) \
+    | awk '{ print $1 " tsword_" $1 }' > "$work/renamed.txt"
+if [[ -s $work/renamed.txt ]]; then
+    echo "build.sh: renamed in the runtime (RADV defines them too): $(cut -d' ' -f1 "$work/renamed.txt" | tr '\n' ' ')"
+    objcopy_tool=$("$sdk/bin/llvm-objcopy" --version > /dev/null 2>&1 && echo "$sdk/bin/llvm-objcopy" || command -v llvm-objcopy)
+    "$objcopy_tool" --redefine-syms="$work/renamed.txt" "$lib"
+fi
 printf 'tsword' > "$work/samples.txt"  # (link-title.sh's list of samples: no shaders of its own to copy)
 # - the runtime whole (its constructors and tables are reached only through themselves)
 # - main, exit, _exit and atexit wrapped: the title ends through the shell (ps5/tsword/ps5_glue.c)
@@ -48,7 +61,7 @@ for name in $cwd_wraps; do wrap_flags+=" --wrap=$name"; done
 export LINK_EXTRA_FLAGS="--wrap=main --wrap=exit --wrap=_exit --wrap=_Exit --wrap=atexit$wrap_flags$bind_flags --version-script $work/platform-local.map"
 trap '[[ -f $work/link/llvm-pie.elf ]] && "$(command -v llvm-readelf-18 || command -v llvm-readelf || echo readelf)" -lSW "$work/link/llvm-pie.elf" | grep -vE "^\s*$" | head -120' ERR
 bash "$ps5/tools/link-title.sh" "$work" "$vulkan" "$sdk" \
-    --whole-archive "$out/libtsword.a" --no-whole-archive \
+    --whole-archive "$lib" --no-whole-archive \
     "$deps/lib/libvpx.a" "$deps/lib/libopus.a" "$deps/lib/libzstd.a"
 
 app="$root/dist/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["titleId"])' "$ps5/sce_sys/param.json")"
