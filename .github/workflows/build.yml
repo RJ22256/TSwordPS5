@@ -102,7 +102,7 @@ jobs:
         run: |
           command -v ffmpeg || sudo apt-get install -y -qq ffmpeg
           bash ps5/tools/home-screen.sh ../PS5_Vulkan
-      - name: The title
+      - name: The console check (the toolchain's check)
         working-directory: TSwordPS5
         run: |
           bash ps5/tools/build.sh
@@ -119,15 +119,15 @@ jobs:
           nasm -v
           sdk=$(bash ps5/tools/setup-sdk.sh)
           bash ps5/tsword/deps.sh "$sdk" build/tsword-deps
-      - name: The TotK runtime cross-built (milestone 2, libtsword.a)
+      - name: TSword as the title (eboot.bin)
         working-directory: TSwordPS5
         run: |
+          rm -rf dist  # (the console check above: the toolchain's check, not released)
+          bash ps5/tsword/build.sh
           sdk=$(bash ps5/tools/setup-sdk.sh)
-          python3 ps5/tsword/configure.py --sdk "$sdk" --deps build/tsword-deps --out build/tsword
-          ninja -C build/tsword > build/tsword/build.log 2>&1 || { grep -E "error|FAILED" build/tsword/build.log | head -60; exit 1; }
-          ls -la build/tsword/libtsword.a
           python3 ps5/tsword/missing.py --sdk "$sdk" build/tsword/libtsword.a build/tsword-deps/lib/*.a \
             | tee build/tsword/missing.txt >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist/PPSA99778
       - name: The zip
         working-directory: TSwordPS5
         run: |

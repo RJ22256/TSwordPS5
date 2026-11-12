@@ -2,7 +2,7 @@
 
 **TSword - the Tears of the Kingdom recompilation ([TotK Recomp](https://github.com/valentderah/totk-pc-recomp), MIT) - as a native title for a jailbroken PS5:** a raw title folder, `PPSA99778`, with its `eboot.bin`, that ShadowMountPlus puts on the home screen. It sits beside WSword (`PPSA99777`); the two don't share anything on the console.
 
-> **Status: milestone 1 - the console check.** This build is not the game yet. It boots as TSword's PS5 title, draws on the PS5's GPU, and checks what the port needs on *your* console; its report decides the next steps. See [the plan](docs/PLAN.md).
+> **Status: milestone 3 - the first link.** The eboot is TotK Recomp's runtime built for the PS5; it starts and stops where it needs the game code, which the PS5 export (milestone 4) will bring from your PC. See [the plan](docs/PLAN.md).
 
 No game files, keys or game code come with TSword PS5. The game code is built on your PC from your own dump (the base game and the 1.2.1 or 1.4.3 update), as TotK Recomp does on PC.
 

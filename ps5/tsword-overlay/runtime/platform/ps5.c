@@ -872,18 +872,15 @@ static void fault_handler(int sig, siginfo_t *si, void *uc) {
     if ((sig == SIGSEGV || sig == SIGBUS) && read_guard) siglongjmp(*read_guard, 1);
     if ((sig == SIGSEGV || sig == SIGBUS) && fault_hook && (err & 2) && fault_hook((uint64_t)(uintptr_t)si->si_addr)) return;
     uintptr_t rip = (uintptr_t)u->uc_mcontext.mc_rip;
-    Dl_info at, self;
     if (crash_fn) {
-        int found = dladdr((void *)rip, &at) && at.dli_fname;
+        // (the console: the title's image is the module; anything else - the game code, a system module - by address)
+        char mod[32];
+        uintptr_t mbase = 0;
+        int found = plat_module_of(rip, mod, sizeof mod, &mbase);
         PlatCrash c = {sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
                        : sig == SIGILL ? "illegal instruction" : "arithmetic exception",
-                       (uint32_t)sig, rip, found ? rip - (uintptr_t)at.dli_fbase : rip, -1, 0};
-        if (!found) {
-            c.module = "";
-        } else if (!dladdr((void *)plat_crash_hook, &self) || at.dli_fbase != self.dli_fbase) {
-            const char *n = strrchr(at.dli_fname, '/');
-            c.module = n ? n + 1 : at.dli_fname;
-        }
+                       (uint32_t)sig, rip, found ? rip - mbase : rip, -1, 0};
+        if (!found) c.module = "";
         if (sig == SIGSEGV || sig == SIGBUS)
             c.access = (err & 16) ? 8 : (err & 2) ? 1 : 0, c.addr = (uint64_t)(uintptr_t)si->si_addr;
         const mcontext_t *m = &u->uc_mcontext;
@@ -1113,25 +1110,18 @@ int plat_temp_dir(char *out, size_t cap) {
     return snprintf(out, cap, "%.*s", (int)n, t) < (int)cap;
 }
 
-uintptr_t plat_exe_base(void) {
-    Dl_info d;
-    return dladdr((void *)plat_exe_base, &d) ? (uintptr_t)d.dli_fbase : 0;
-}
+// (the console) The title's image: from the ELF header the linker places first (__ehdr_start) to its end (_end). Its
+// path is /app0/eboot.bin - the title folder, where the runtime keeps its log, its settings and its caches.
+extern const char __ehdr_start[], _end[];
+uintptr_t plat_exe_base(void) { return (uintptr_t)__ehdr_start; }
 
 int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base) {
-    Dl_info d;
-    if (!dladdr((void *)addr, &d) || !d.dli_fname) return 0;
-    const char *n = strrchr(d.dli_fname, '/');
-    *base = (uintptr_t)d.dli_fbase;
-    return snprintf(name, cap, "%s", n ? n + 1 : d.dli_fname) < (int)cap;
+    if (addr < (uintptr_t)__ehdr_start || addr >= (uintptr_t)_end) return 0;
+    *base = (uintptr_t)__ehdr_start;
+    return snprintf(name, cap, "eboot.bin") < (int)cap;
 }
 
-int plat_exe_path(char *out, size_t cap) {
-    ssize_t n = readlink("/proc/self/exe", out, cap - 1);
-    if (n <= 0 || (size_t)n >= cap - 1) return 0;
-    out[n] = 0;
-    return 1;
-}
+int plat_exe_path(char *out, size_t cap) { return snprintf(out, cap, "/app0/eboot.bin") < (int)cap; }
 
 size_t plat_getenv(const char *name, char *out, size_t cap) {
     const char *v = getenv(name);
@@ -1192,36 +1182,11 @@ int plat_font_path(const char *lang, char *out, size_t cap) {
 }
 
 // PRETTY_NAME of /etc/os-release and the kernel release: "SteamOS (Linux 6.16.12-valve)".
-int plat_os_version(char *out, size_t cap) {
-    char name[128] = "Linux";
-    FILE *f = fopen("/etc/os-release", "r");
-    if (f) {
-        char line[256];
-        while (fgets(line, sizeof line, f))
-            if (!strncmp(line, "PRETTY_NAME=", 12)) {
-                char *v = line + 12, *e;
-                if (*v == '"') v++;
-                if ((e = strpbrk(v, "\"\n"))) *e = 0;
-                snprintf(name, sizeof name, "%s", v);
-                break;
-            }
-        fclose(f);
-    }
-    struct utsname u;
-    if (uname(&u)) return snprintf(out, cap, "%s", name) < (int)cap;
-    return snprintf(out, cap, "%s (Linux %s)", name, u.release) < (int)cap;
-}
+int plat_os_version(char *out, size_t cap) { return snprintf(out, cap, "PlayStation 5 (TSword PS5)") < (int)cap; }
 
 int plat_is_wine(void) { return 0; }
 
-int plat_stderr_path(char *out, size_t cap) {
-    struct stat st;
-    if (fstat(2, &st) || !S_ISREG(st.st_mode)) return 0;
-    ssize_t n = readlink("/proc/self/fd/2", out, cap - 1);
-    if (n <= 0 || (size_t)n >= cap - 1) return 0;
-    out[n] = 0;
-    return 1;
-}
+int plat_stderr_path(char *out, size_t cap) { (void)out, (void)cap; return 0; }   // (the console's stderr: the kernel log)
 
 // ---- process
 

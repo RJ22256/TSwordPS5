@@ -81,6 +81,21 @@ def main():
         cpp = s.endswith(".cpp")
         extra = f" | {font}" if s == "ui/menu.cpp" else ""
         n.append(f"build {o}: {'cxx' if cpp else 'cc'} {R}/{s}{extra}\n  flags = {cxxflags if cpp else cflags}\n")
+    # the console's side (ps5/tsword): the SDL3 subset, the stand-ins for the game code's side (milestone 3), clang's
+    # CPU model, the process end and working directory (WSword PS5's), and the Vulkan commands (vkgen.py)
+    ps5t = os.path.join(ROOT, "ps5", "tsword")
+    pv = f"{version} (TSword PS5)"
+    side = {"sdl/sdl_ps5.c": "", "ps5_glue.c": "", "ps5_cwd.c": "", "cpu_model.c": "",
+            "gamecode.c": f"-DTSWORD_PORT_VERSION='\"{pv}\"' {cflags}"}
+    for s_, extra in side.items():
+        o = f"{out}/obj/ps5/{os.path.splitext(s_)[0]}.o"
+        objs.append(o)
+        n.append(f"build {o}: cc {ps5t}/{s_}\n  flags = {extra or f'-std=gnu17 -O2 -g -march=znver2 -fno-omit-frame-pointer -Wall -I{deps}/include'}\n")
+    vkc = f"{out}/gen/vk_dispatch.c"
+    n.append(f"rule vkgen\n  command = {sys.executable} {ps5t}/vkgen.py $in $out\n  description = vkgen\n")
+    n.append(f"build {vkc}: vkgen {deps}/include/vulkan/vulkan_core.h | {ps5t}/vkgen.py\n")
+    objs.append(f"{out}/obj/ps5/vk_dispatch.o")
+    n.append(f"build {out}/obj/ps5/vk_dispatch.o: cc {vkc}\n  flags = -std=gnu17 -O2 -g -march=znver2 -w -I{deps}/include\n")
     n.append(f"build {out}/libtsword.a: ar {' '.join(objs)}\n")
     n.append(f"default {out}/libtsword.a\n")
     with open(os.path.join(out, "build.ninja"), "w") as f:
