@@ -27,11 +27,20 @@ compiled on the player's PC from their own dump), and the **game files** (the du
 
 ## Milestones
 
-1. **The console check** (v0.1.0-m1): the title builds, signs and boots from `PPSA99778`; its report says what the
-   runtime will find there (above).
-2. **The runtime cross-built**: `tsword/` (TotK Recomp's `runtime/`, `tools/sync-tsword.sh`) compiled with the payload
-   SDK into `libtsword.a`, with its dependencies for the console (SDL3 subset - WSword's, libopus, libvpx, zstd, VMA);
-   `runtime/platform/ps5.c` from `linux.c`; the list of what's still missing.
+1. **The console check** - done (v0.1.0-m1): 58 of 58 on the player's console. RADV has everything the runtime uses,
+   `VK_EXT_external_memory_host` included (imports at 16 KiB alignment); the 6 GB block reserved at 0x440000000 and the
+   alias region at 0x1000000000, 3.5 GB backed and imported into Vulkan; write-protection faults and signals to busy
+   threads work. No ASTC on the GPU: the runtime's compute decoder (vk_astc.c) does it, as on most PC GPUs.
+2. **The runtime cross-built** - done: `tsword/` (TotK Recomp 0.4.0 at 7a37fc3, `tools/sync-tsword.sh`, with
+   `ps5/tsword-patches` and `ps5/tsword-overlay`) compiled by `ps5/tsword/configure.py` into `libtsword.a` (114 objects),
+   with opus 1.5.2, libvpx 1.15.2 (VP9 decoder, nasm) and zstd 1.5.7 for the console (`ps5/tsword/deps.sh`). The
+   console's platform layer, `runtime/platform/ps5.c`, is linux.c with: _umtx_op for the futex; guest memory, thread
+   and fiber stacks on direct memory (ps5platform's ranges, stacks committed as they grow); 16 KiB protection pages;
+   FreeBSD's signal contexts; no write watch (the back end runs in its unified-memory mode: RADV calls the PS5's GPU
+   discrete, `ps5/tsword-patches/0001` says otherwise); no child processes. What's still needed from outside
+   (`ps5/tsword/missing.py`, in each CI run's summary): 154 Vulkan entry points (RADV), 61 SDL3 functions (43 in WSword
+   PS5's subset), `__cpu_model`, and the install side - romfs, the patch sets, the layout and version tables - which
+   comes with the game code.
 3. **First link**: the title is TotK Recomp's runtime, up to where it looks for the game code.
 4. **The game code loader and the PS5 export** (the PC side: a script beside TotK Recomp's setup that lifts, builds the
    game code for the console, translates and packs the shaders, and writes the PPSA folder's files).

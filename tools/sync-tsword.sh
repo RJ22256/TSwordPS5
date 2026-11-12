@@ -21,6 +21,8 @@ for p in "$root"/ps5/tsword-patches/*.patch; do
     [[ -f $p ]] || continue
     git -C "$root" apply --directory=tsword "$p"
 done
+# the console's own files (runtime/platform/ps5.c...), over the tree as they are
+cp -r "$root/ps5/tsword-overlay/." "$root/tsword/"
 {
     echo "TotK Recomp (https://github.com/valentderah/totk-pc-recomp, MIT)"
     echo "commit: $(git -C "$src" rev-parse "$rev")"

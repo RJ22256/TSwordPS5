@@ -78,7 +78,15 @@ __attribute__((target("sha,sse4.1"))) static void blocks_ni(uint32_t h[8], const
 static void blocks(uint32_t h[8], const uint8_t *p, size_t n) {
 #if defined(__x86_64__)
     static int ni = -1;
+#ifdef __PROSPERO__
+    if (ni < 0) {   // (TSword PS5: the console's clang names no "sha" feature - CPUID leaf 7, EBX bit 29; Zen 2 has it)
+        unsigned a, b, c, d;
+        __asm__("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(7), "c"(0));
+        ni = (b >> 29 & 1) && __builtin_cpu_supports("sse4.1");
+    }
+#else
     if (ni < 0) ni = __builtin_cpu_supports("sha") && __builtin_cpu_supports("sse4.1");
+#endif
     if (ni) return blocks_ni(h, p, n);
 #endif
     blocks_c(h, p, n);

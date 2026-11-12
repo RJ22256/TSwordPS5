@@ -2409,6 +2409,10 @@ void vk_mem_class_log(const VkPhysicalDeviceProperties *p, const VkPhysicalDevic
     int t = (int)p->deviceType;
     const char *tn = t >= 0 && t <= 4 ? types[t] : "unknown";
     const char *cls, *why;
+#ifdef __PROSPERO__
+    if (1) cls = "uma", why = "the PS5: one memory for the CPU and the GPU";   // (TSword PS5: RADV calls it discrete)
+    else
+#endif
     if (p->deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) cls = "uma", why = "integrated gpu";
     else if (p->deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) cls = "uma", why = "not a discrete gpu";
     else if (big_local < 0) cls = "uma", why = "no device-local heap of 1 GiB or more";

@@ -66,7 +66,11 @@ bool amiibo_check_font_rebuild(void);  // ui/amiibo_page.cpp; check and clear fo
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wc23-extensions"   // #embed in C++
 static const unsigned char roboto_ttf[] = {
+#ifdef __PROSPERO__
+#include "roboto_ttf.inc"   // (TSword PS5: the console's clang has no #embed - the build writes the bytes out)
+#else
 #embed "fonts/Roboto-Medium.ttf"
+#endif
 };
 #pragma clang diagnostic pop
 
