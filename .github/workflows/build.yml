@@ -1,0 +1,133 @@
+# TSword PS5: the title (PPSA99778) built for a jailbroken PS5 - its eboot.bin, sce_sys and files - on the PS5 stack:
+# mihawk-99's PS5_Vulkan (RADV, Mesa's Vulkan driver, built for the console from PS5_Mesa; its native tool, which signs
+# the eboot, and libc.prx) and the PS5 payload SDK fork (PS5_PayloadSDK). Started by hand with a tag, the zip is
+# published as a release of this repository.
+name: Build PS5 title
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the PPSA folder as a release with this tag (e.g. v0.1.0-m1); empty: none"
+        required: false
+        default: ""
+      release_notes:
+        description: "Release notes: a Markdown file in the repository"
+        required: false
+        default: ""
+
+jobs:
+  ps5:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: TSwordPS5
+          submodules: recursive
+      - name: Host tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 lld-18 llvm-18 cmake ninja-build glslang-tools rsync curl zstd \
+            python3-numpy python3-pil python3-mako python3-pip bison flex pkg-config zlib1g-dev libzstd-dev \
+            libexpat1-dev libelf-dev libdrm-dev spirv-tools \
+            llvm-18-dev libclang-18-dev libclang-cpp18-dev libllvmspirvlib-18-dev libclc-18-dev libclc-18 \
+            python3-yaml python3-ply libpolly-18-dev
+          sudo ln -sf /usr/bin/clang-18 /usr/local/bin/clang
+          sudo ln -sf /usr/bin/clang++-18 /usr/local/bin/clang++
+          sudo ln -sf /usr/bin/ld.lld-18 /usr/local/bin/ld.lld
+          for t in llvm-ar llvm-objcopy llvm-nm llvm-ranlib llvm-strip llvm-config llvm-spirv; do
+            [[ -e /usr/bin/$t-18 ]] && sudo ln -sf /usr/bin/$t-18 /usr/local/bin/$t
+          done
+          [[ -e /usr/local/bin/llvm-config ]] || sudo ln -sf /usr/lib/llvm-18/bin/llvm-config /usr/local/bin/llvm-config
+          pip install --user --break-system-packages "meson>=1.4" packaging pyyaml
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          clang --version | head -1; meson --version
+      - name: The PS5 stack beside it
+        run: |
+          # PS5_Vulkan at the revision of the template's time (2026-10-07): its HEAD's RADV left entry points the
+          # template's link can't resolve (radv_EnumeratePhysicalDevices)
+          git clone -q https://github.com/mihawk-99/PS5_Vulkan.git
+          git -C PS5_Vulkan checkout -q "${PS5_VULKAN_REV:-4e41388958f861b02e06451e014e65871fa4ffa7}"
+          git clone -q https://github.com/mihawk-99/PS5_PayloadSDK.git
+          git -C PS5_Vulkan log -1 --format='PS5_Vulkan %h %ci'
+          echo "VULKAN_REV=$(git -C PS5_Vulkan rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "MESA_PIN=$(sed -n 's/^mesa_revision=.*\([0-9a-f]\{40\}\).*/\1/p' PS5_Vulkan/tools/build-radv.sh)" >> "$GITHUB_ENV"
+      - name: RADV cache
+        id: radv
+        uses: actions/cache@v4
+        with:
+          path: |
+            PS5_Vulkan/.deps
+            PS5_Vulkan/build/host
+            PS5_Vulkan/runtime/libc.prx
+          key: ps5-radv-${{ env.MESA_PIN }}-${{ env.VULKAN_REV }}-${{ hashFiles('TSwordPS5/ps5/radv-patches/*.patch') }}
+          restore-keys: ps5-radv-${{ env.MESA_PIN }}-
+      - name: PS5_Mesa at PS5_Vulkan's pin
+        run: |
+          mkdir PS5_Mesa && cd PS5_Mesa
+          git init -q && git remote add origin https://github.com/mihawk-99/PS5_Mesa.git
+          git fetch -q --depth 1 origin "$MESA_PIN" && git checkout -q FETCH_HEAD
+          git log -1 --format='PS5_Mesa %h %ci'
+          # TSword's changes to RADV (ps5/radv-patches: HDR10 scanout), committed with fixed names and dates so the
+          # commit - the revision build-radv.sh archives and records - is the same on every run (the cache holds)
+          for p in ../TSwordPS5/ps5/radv-patches/*.patch; do git apply "$p"; echo "applied ${p##*/}"; done
+          git add -A
+          GIT_AUTHOR_NAME=WSword GIT_AUTHOR_EMAIL=wsword@invalid GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' \
+          GIT_COMMITTER_NAME=WSword GIT_COMMITTER_EMAIL=wsword@invalid GIT_COMMITTER_DATE='2026-01-01T00:00:00Z' \
+            git commit -q -m "WSword: RADV patches"
+          patched=$(git rev-parse HEAD)
+          sed -i "s/^mesa_revision=.*/mesa_revision=$patched/" ../PS5_Vulkan/tools/build-radv.sh
+          echo "MESA_PIN=$patched" >> "$GITHUB_ENV"
+          echo "PS5_Mesa with the RADV patches: $patched"
+      - name: Payload SDK, native tool, libc.prx, RADV (a long build the first time)
+        working-directory: PS5_Vulkan
+        run: |
+          bash tools/setup-native-dependencies.sh
+          [[ -x build/host/ps5-native-tool && -f runtime/libc.prx ]] || make > ../make.log 2>&1 || true
+          [[ -x build/host/ps5-native-tool && -f runtime/libc.prx ]] || { tail -60 ../make.log; exit 1; }
+          prov=.deps/native/radv-release/PROVENANCE.txt
+          if [[ "$(sed -n 's/^revision: //p' $prov 2>/dev/null)" != "$MESA_PIN" ]]; then
+            # (another revision's build tree, restored from the cache: configured afresh)
+            rm -rf .deps/work/radv-build-ps5-release
+            bash tools/build-radv.sh release || { tail -60 .deps/work/radv-build-ps5-release.setup.log 2>/dev/null; exit 1; }
+          fi
+          ls -la .deps/native/radv-release/lib/
+      - name: The home screen's icon, backgrounds and music (ps5/art)
+        working-directory: TSwordPS5
+        run: |
+          command -v ffmpeg || sudo apt-get install -y -qq ffmpeg
+          bash ps5/tools/home-screen.sh ../PS5_Vulkan
+      - name: The title
+        working-directory: TSwordPS5
+        run: |
+          bash ps5/tools/build.sh
+          ls -la dist/PPSA99778
+      - name: The zip
+        working-directory: TSwordPS5
+        run: |
+          ver=$(python3 -c 'import json; print(json.load(open("ps5/sce_sys/param.json"))["contentVersion"])')
+          cd dist && zip -qr "../TSwordPS5-PPSA99778.zip" PPSA99778 && cd ..
+          sha256sum TSwordPS5-PPSA99778.zip > TSwordPS5-PPSA99778.zip.sha256
+          echo "::notice title=Zip::$(du -m TSwordPS5-PPSA99778.zip | cut -f1) MB"
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true  # (the account's artifact storage can be full: the release doesn't need it)
+        with:
+          name: TSwordPS5-PPSA99778
+          path: TSwordPS5/TSwordPS5-PPSA99778.zip
+          retention-days: 7
+      - name: Release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release != '' }}
+        working-directory: TSwordPS5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release }}
+          NOTES: ${{ inputs.release_notes }}
+        run: |
+          if [[ -n "$NOTES" && -f "$NOTES" ]]; then n=(--notes-file "$NOTES"); else n=(--notes "TSword PS5 $TAG"); fi
+          gh release create "$TAG" TSwordPS5-PPSA99778.zip TSwordPS5-PPSA99778.zip.sha256 --target "$GITHUB_SHA" \
+            --title "TSword PS5 $TAG" --prerelease "${n[@]}"
