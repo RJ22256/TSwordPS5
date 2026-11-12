@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <SDL3/SDL.h>
 #include <ps5platform/exec.h>
@@ -27,7 +28,8 @@
 #error "TSWORD_GAMECODE_ID: what the PS5 export's game code must say it was built for (configure.py, gamecode_id.py)"
 #endif
 #define GAME_DIR "/app0"
-#define GAME_LIB GAME_DIR "/tsgame.so"
+static char g_lib[600] = GAME_DIR "/tsgame.so";
+#define GAME_LIB g_lib
 
 extern const ElfExport g_tsword_exports[];
 extern const size_t g_tsword_nexports;
@@ -78,6 +80,83 @@ char tsg_romfs[PATH_CAP] __asm__("rt_default_romfs") = GAME_DIR "/romfs";
 char tsg_profile[PATH_CAP] __asm__("rt_default_profile") = GAME_DIR "/profile";
 int tsg_game_version __asm__("rt_game_version");
 const char rt_port_version[] = TSWORD_PORT_VERSION;
+
+// ---- the game files: the title folder, or an external drive
+// The PC's PS5 export folder (exefs/, romfs/, romfs-index.bin, the romfs-patches folders, shared-fonts/, the shader
+// cache, tsgame.so) can be copied to a USB drive or extended storage instead of the title folder. In order, the first
+// with exefs/main.npdm is used:
+//   1. the folder named by the first line of game-files.txt in the title folder (a full path)
+//   2. the title folder itself (as before)
+//   3. on each USB drive (/mnt/usb0 to usb7) and extended storage (/mnt/ext0 to ext2): TSword/, PPSA99778/, PS5/,
+//      TSword/PS5/ or the drive's top
+// Another folder than the title's: the runtime is pointed at it (TOTK_EXEFS, TOTK_ROMFS, TOTK_ROMFS_INDEX - the
+// romfs-patches folders beside it - TOTK_SHARED_FONTS, TOTK_SHADER_CACHE), and tsgame.so is taken from it when the
+// title folder has none. Saves, logs and settings stay in the title folder.
+static bool exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static bool has_game(const char *dir) {
+    char p[700];
+    snprintf(p, sizeof p, "%s/exefs/main.npdm", dir);
+    return exists(p);
+}
+
+static void use_game_dir(const char *dir) {
+    char p[700];
+    snprintf(p, sizeof p, "%s/exefs", dir), setenv("TOTK_EXEFS", p, 1);
+    snprintf(p, sizeof p, "%s/romfs", dir), setenv("TOTK_ROMFS", p, 1);
+    snprintf(p, sizeof p, "%s/romfs-index.bin", dir);
+    if (exists(p)) setenv("TOTK_ROMFS_INDEX", p, 1);
+    snprintf(p, sizeof p, "%s/shared-fonts", dir);
+    if (exists(p)) setenv("TOTK_SHARED_FONTS", p, 1);
+    snprintf(p, sizeof p, "%s/shader-cache", dir);
+    if (exists(p) && !exists(GAME_DIR "/shader-cache")) setenv("TOTK_SHADER_CACHE", p, 1);
+    snprintf(p, sizeof p, "%s/tsgame.so", dir);
+    if (!exists(GAME_DIR "/tsgame.so") && exists(p)) snprintf(g_lib, sizeof g_lib, "%s", p);
+}
+
+static void find_game_files(void) {
+    FILE *f = fopen(GAME_DIR "/game-files.txt", "r");
+    if (f) {
+        char line[512] = "";
+        if (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            size_t k = strlen(line);
+            while (k > 1 && line[k - 1] == '/') line[--k] = 0;
+            if (line[0] && has_game(line)) {
+                fclose(f);
+                use_game_dir(line);
+                fprintf(stderr, "[tsword] game files: %s (game-files.txt)\n", line);
+                return;
+            }
+            fprintf(stderr, "[tsword] game-files.txt names %s, which has no exefs/main.npdm\n", line);
+        }
+        fclose(f);
+    }
+    if (has_game(GAME_DIR)) {
+        fprintf(stderr, "[tsword] game files: the title folder\n");
+        return;
+    }
+    static const char *const drives[] = {"/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/usb3", "/mnt/usb4", "/mnt/usb5",
+                                         "/mnt/usb6", "/mnt/usb7", "/mnt/ext0", "/mnt/ext1", "/mnt/ext2"};
+    static const char *const sub[] = {"TSword", "PPSA99778", "PS5", "TSword/PS5", ""};
+    for (size_t d = 0; d < sizeof drives / sizeof *drives; d++) {
+        if (!exists(drives[d])) continue;
+        for (size_t i = 0; i < sizeof sub / sizeof *sub; i++) {
+            char p[600];
+            snprintf(p, sizeof p, "%s%s%s", drives[d], sub[i][0] ? "/" : "", sub[i]);
+            if (has_game(p)) {
+                use_game_dir(p);
+                fprintf(stderr, "[tsword] game files: %s (an external drive)\n", p);
+                return;
+            }
+        }
+        fprintf(stderr, "[tsword] %s: no TSword, PPSA99778 or PS5 folder with the game on it\n", drives[d]);
+    }
+    fprintf(stderr, "[tsword] game files: none found (the title folder, or TSword/ on a USB or extended storage drive)\n");
+}
 
 // ---- loading
 
@@ -137,15 +216,19 @@ static bool copy_data(const ElfImage *img) {
 // Before the runtime's main (ps5_glue.c __wrap_main). false: g_why says what's missing.
 bool tsword_gamecode_load(void) {
     char id[256];
+    find_game_files();
     FILE *probe = fopen(GAME_LIB, "rb");
     if (!probe) {
         snprintf(g_why, sizeof g_why,
-                 "No game code in the title folder yet (tsgame.so). On your PC: run TSword Setup with your game files, "
-                 "then its PS5 export, and copy the PS5 folder's contents here.");
+                 "No game code yet (tsgame.so). On your PC: run TSword Setup with your game files and its PS5 export, "
+                 "then copy the PS5 folder's contents into the title folder, or to TSword/ on a USB or extended "
+                 "storage drive.");
         return false;
     }
     fclose(probe);
-    if (!read_text(GAME_LIB ".id", id, sizeof id) || strcmp(id, TSWORD_GAMECODE_ID)) {
+    char idpath[640];
+    snprintf(idpath, sizeof idpath, "%s.id", GAME_LIB);
+    if (!read_text(idpath, id, sizeof id) || strcmp(id, TSWORD_GAMECODE_ID)) {
         snprintf(g_why, sizeof g_why,
                  "The game code (tsgame.so) was built by another version of TSword Setup (%.24s, this title needs "
                  "%.24s). Run the PS5 export of the TSword Setup made for this release and copy it again.",
