@@ -90,6 +90,13 @@ jobs:
           kit=(); [[ -d ../../kit/TSword-PS5-kit ]] && kit=(--ps5-kit ../../kit/TSword-PS5-kit)
           python tools/make_release.py --out build/release/TSword-Setup --zip ../../TSword-Setup-windows.zip "${kit[@]}"
           cd ../.. && sha256sum TSword-Setup-windows.zip > TSword-Setup-windows.zip.sha256 && ls -la TSword-Setup-windows.zip
+      - name: The PS5 export's compile, with the release's own compiler (tools/build_ps5.py --smoke)
+        if: ${{ inputs.ps5_release != '' }}
+        working-directory: TSwordPS5/tsword/build/release/TSword-Setup
+        run: |
+          # the install side and every inline function of the lifted C, built as the export builds them, with the
+          # folder's llvm/ and its ps5/ kit; their imports checked against the PS5 title's export table
+          python/python.exe tools/build_ps5.py --smoke --toolchain llvm --ps5 ps5 --runtime runtime --out ../../ps5-smoke
       - name: Release
         if: ${{ inputs.release != '' && inputs.ps5_release != '' }}
         working-directory: TSwordPS5

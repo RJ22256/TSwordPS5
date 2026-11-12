@@ -239,9 +239,16 @@ def inline_functions(clang, runtime, include, gen):
 
 
 def dry_run(a):
-    sdk, runtime, deps, out = (Path(x).resolve() for x in (a.sdk, a.runtime, a.deps, a.out))
-    clang, lld, nm = sdk / 'bin' / 'clang', Path(a.lld or shutil.which('ld.lld') or 'ld.lld'), sdk / 'bin' / 'llvm-nm'
-    sys_inc = sdk / 'target' / 'include'
+    runtime, out = Path(a.runtime).resolve(), Path(a.out).resolve()
+    smoke = a.toolchain is not None   # --smoke: the release's own clang and lld with its PS5 kit
+    if smoke:
+        llvm, kit = Path(a.toolchain).resolve(), Path(a.ps5).resolve()
+        clang, lld, nm = (llvm / 'bin' / (n + EXE) for n in ('clang', 'ld.lld', 'llvm-nm'))
+        sys_inc, deps = kit / 'include', kit / 'include'
+    else:
+        sdk, deps = Path(a.sdk).resolve(), Path(a.deps).resolve()
+        clang, lld, nm = sdk / 'bin' / 'clang', Path(a.lld or shutil.which('ld.lld') or 'ld.lld'), sdk / 'bin' / 'llvm-nm'
+        sys_inc, deps = sdk / 'target' / 'include', deps / 'include'
     shutil.rmtree(out, ignore_errors=True)
     gen = out / 'gen'
     gen.mkdir(parents=True)
@@ -258,8 +265,7 @@ def dry_run(a):
     hashes = {'main': '0' * 64}
     write_if_changed(out / 'modules.c', module_c([('main', 0x7000000000, 0x8000000)], ['main'], hashes, 'v143',
                                                  gamecode_id(runtime)))
-    inc = ['-isystem', str(sys_inc), '-isystem', str(deps / 'include'), '-I', str(runtime), '-I', str(gen), '-I',
-           str(out)]
+    inc = ['-isystem', str(sys_inc), '-isystem', str(deps), '-I', str(runtime), '-I', str(gen), '-I', str(out)]
     objs = []
     for src, flags in [(gen / 'main' / 'main_table.c', GEN_FLAGS), (gen / 'main' / 'inlines.c', GEN_FLAGS),
                        *((runtime / n, RT_FLAGS) for n in INSTALL_SIDE), (out / 'modules.c', RT_FLAGS)]:
@@ -274,6 +280,14 @@ def dry_run(a):
         sys.exit('build_ps5: the dry-run library did not link')
     need = imports_of(nm, lib)
     (out / 'need.txt').write_text('\n'.join(need) + '\n')
+    if smoke:
+        have = set((kit / 'exports.txt').read_text(encoding='utf-8').split())
+        lack = [n for n in need if n not in have]
+        if lack:
+            sys.exit(f'smoke: the release\'s compiler makes game code importing what the PS5 title lacks: {" ".join(lack)}')
+        print(f'smoke: {len(names)} inline functions and the install side built with {clang}; {len(need)} imports, all '
+              f'exported by the PS5 title')
+        return
     # the headers they read outside runtime/ and the generated ones: the kit's include/
     headers = set()
     for d in out.glob('obj/*.o.d'):
@@ -284,7 +298,7 @@ def dry_run(a):
     kit = out / 'include'
     copied = 0
     for h in sorted(headers):
-        for base in (sys_inc, deps / 'include'):
+        for base in (sys_inc, deps):
             if h.is_relative_to(base):
                 dst = kit / h.relative_to(base)
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -298,6 +312,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--id-only', action='store_true')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--smoke', action='store_true', help="the dry run with --toolchain and --ps5 (TSword Setup's CI)")
     ap.add_argument('--runtime', required=True)
     ap.add_argument('--gen')
     ap.add_argument('--out')
@@ -316,6 +331,8 @@ def main():
     if a.id_only:
         print(gamecode_id(a.runtime))
     elif a.dry_run:
+        dry_run(a)
+    elif a.smoke:
         dry_run(a)
     else:
         for k in ('gen', 'out', 'toolchain', 'ps5', 'expected', 'romfs'):
