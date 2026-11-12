@@ -34,6 +34,7 @@
 #include <unistd.h>
 
 #include <ps5platform/kernel.h>
+#include <ps5platform/memory.h>
 #include <ps5platform/shm.h>
 
 #include "platform.h"
@@ -78,6 +79,8 @@ static void alt_stack(void) {
     sigaltstack(&ss, NULL);
 }
 
+static int direct_memory(struct ps5_memory_stats *m) { return ps5_memory_query(m); }
+
 // Thread stacks (plat_thread_new_ex): reserved ranges, the top STACK_FIRST committed; stack_fault commits the 64 KiB
 // unit a thread touches below it. The ranges stay (threads that end are few).
 #define STACK_FIRST (256u << 10)
@@ -86,17 +89,41 @@ static struct { uint64_t lo, hi; } stacks[MAX_STACKS];
 static int nstacks;
 static PlatMutex stack_lock = PLAT_MUTEX_INIT;
 
-static void *stack_alloc(size_t size) {
+// why: the reservation's (1) or the commit's (2) result in its low bits, for the log
+static void *stack_alloc(size_t size, int *why) {
     void *b = NULL;
-    if (size < STACK_FIRST * 2 || ps5_vrange_reserve(size, NULL, 0x10000, &b)) return NULL;
-    if (ps5_vrange_commit((char *)b + size - STACK_FIRST, STACK_FIRST, PS5_SHM_READ | PS5_SHM_WRITE)) {
+    int r;
+    if (size < STACK_FIRST * 2) return NULL;
+    if ((r = ps5_vrange_reserve(size, NULL, 0x10000, &b)) != 0) {
+        *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x10000000u);
+        return NULL;
+    }
+    if ((r = ps5_vrange_commit((char *)b + size - STACK_FIRST, STACK_FIRST, PS5_SHM_READ | PS5_SHM_WRITE)) != 0) {
         ps5_vrange_release(b, size);
+        *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x20000000u);
         return NULL;
     }
     plat_mutex_lock(&stack_lock);
     if (nstacks < MAX_STACKS) stacks[nstacks].lo = (uint64_t)(uintptr_t)b, stacks[nstacks++].hi = (uint64_t)(uintptr_t)b + size;
     plat_mutex_unlock(&stack_lock);
     return b;
+}
+
+static const char *why_reserve(int why) {
+    return (unsigned)why >> 28 == 1 ? "stack reservation failed" : (unsigned)why >> 28 == 2 ? "stack commit failed"
+                                                                                             : "no stack";
+}
+
+// A stack whose thread didn't start: its range given back and taken off the list.
+static void stack_free(void *b, size_t size) {
+    plat_mutex_lock(&stack_lock);
+    for (int i = 0; i < nstacks; i++)
+        if (stacks[i].lo == (uint64_t)(uintptr_t)b) {
+            stacks[i] = stacks[--nstacks];
+            break;
+        }
+    plat_mutex_unlock(&stack_lock);
+    ps5_vrange_release(b, size);
 }
 
 // A fault in a thread stack's reserved part: its 64 KiB unit committed (the lowest 16 KiB of the range stays a guard).
@@ -136,12 +163,27 @@ PlatThread *plat_thread_new_ex(PlatThreadFn fn, void *arg, const char *name, siz
     // (stack_fault), as Windows reserves it: a pthread's own stack would be charged to the title's ~1 GB flexible budget.
     size_t size = ((stack ? stack : PLAT_STACK_DEFAULT) + 0xFFFF) & ~(size_t)0xFFFF;
     fault_install();   // (stack_fault: the stack's first touches below its top)
-    void *base = stack_alloc(size);
+    int why = 0;
+    void *base = stack_alloc(size, &why);
     if (base) pthread_attr_setstack(&a, base, size);
     else pthread_attr_setstacksize(&a, size);
     int e = pthread_create(&t->t, &a, thread_main, t);
     pthread_attr_destroy(&a);
-    if (e) { free(t); return NULL; }
+    if (e) {
+        // why a thread can't start, for the log (the caller's fatal message names only the thread's kind)
+        struct ps5_memory_stats m;
+        int known = direct_memory(&m);
+        fprintf(stderr, "[ps5] thread %s: pthread_create error %d with a %zu MiB stack (%s %#x); %d stacks reserved; "
+                "direct memory %s%llu of %llu MiB free (largest %llu MiB), flexible %llu MiB free\n",
+                t->name, e, size >> 20, base ? "reserved" : why_reserve(why), (unsigned)why, nstacks,
+                known ? "" : "unknown: ", known ? (unsigned long long)(m.free_bytes >> 20) : 0ull,
+                known ? (unsigned long long)(m.total_bytes >> 20) : 0ull,
+                known ? (unsigned long long)(m.largest_bytes >> 20) : 0ull,
+                known ? (unsigned long long)(m.flexible_bytes >> 20) : 0ull);
+        if (base) stack_free(base, size);
+        free(t);
+        return NULL;
+    }
     return t;
 }
 
@@ -1532,34 +1574,23 @@ void plat_process_memory(uint64_t *resident, uint64_t *private_bytes) {
     fclose(f);
 }
 
-// Linux overcommits by default, so CommitLimit binds only with vm.overcommit_memory = 2; Committed_AS is what the
-// system has promised. The process's share is its resident anonymous memory, the nearest to Windows' private bytes.
+// The console's memory: the title's direct memory (one pool for the CPU and the GPU; every commit, stack, code and
+// GPU allocation here is direct memory) - its size, and what is still free in it (ps5platform's ps5_memory_query
+// walks the free ranges; unknown when it can't: -1, no limit, as before). With them the runtime's paths that react to
+// a system short of memory (vk_mem_host_room: the headroom block, released textures) see the console's, as they see a
+// Linux UMA machine's MemAvailable.
 void plat_commit_info(double *proc_mb, double *used_mb, double *limit_mb) {
     *proc_mb = *used_mb = *limit_mb = -1;
-    char line[128];
-    unsigned long long k;
-    FILE *f = fopen("/proc/meminfo", "r");
-    if (f) {
-        while (fgets(line, sizeof line, f)) {
-            if (sscanf(line, "CommitLimit: %llu kB", &k) == 1) *limit_mb = (double)(k >> 10);
-            else if (sscanf(line, "Committed_AS: %llu kB", &k) == 1) *used_mb = (double)(k >> 10);
-        }
-        fclose(f);
-    }
-    uint64_t resident, private_bytes;
-    plat_process_memory(&resident, &private_bytes);
-    if (private_bytes) *proc_mb = (double)(private_bytes >> 20);
+    struct ps5_memory_stats m;
+    if (!direct_memory(&m) || m.free_bytes > m.total_bytes) return;
+    *limit_mb = (double)(m.total_bytes >> 20);
+    *used_mb = *proc_mb = (double)((m.total_bytes - m.free_bytes) >> 20);   // (the title is the pool's only user)
 }
 
 void plat_mem_room(uint64_t *commit_room, uint64_t *phys_room) {
     *commit_room = *phys_room = UINT64_MAX;
-    char line[128];
-    unsigned long long k;
-    FILE *f = fopen("/proc/meminfo", "r");
-    if (!f) return;
-    while (fgets(line, sizeof line, f))
-        if (sscanf(line, "MemAvailable: %llu kB", &k) == 1) *phys_room = (uint64_t)k << 10;
-    fclose(f);
+    struct ps5_memory_stats m;
+    if (direct_memory(&m)) *commit_room = *phys_room = m.free_bytes;
 }
 
 // ---- child processes, local IPC, restarts: none on the console (no processes but the title's; no Discord)
