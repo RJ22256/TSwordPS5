@@ -115,7 +115,7 @@ LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
 TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'button_icons.py', 'check_content.py', 'check_isa.py', 'extract.py',
                'hostmem.py', 'make_romfs_patches.py', 'ncz.py', 'pack_shader_cache.py', 'prepare_shaders.py',
                'romfs_index.py', 'shader_census.py', 'shader_list.py', 'ultrawide_layout.py', 'cheats.py',
-               'exefs_patches.py']
+               'exefs_patches.py', 'build_ps5.py']   # (TSword) build_ps5.py: the PS5 export's game code
 TOOLS_DIRS = ['vendor/macnativegames', 'data']   # data/: expected hashes
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
@@ -506,7 +506,7 @@ def build_launcher(out, llvm):
     run([llvm / 'bin' / 'llvm-windres.exe', '-I', ROOT / 'runtime', '-O', 'coff',
          ROOT / 'installer' / 'launcher' / 'launcher.rc', '-o', res], env=env)
     run([llvm / 'bin' / 'clang.exe', '-O2', '-mwindows', '-Wall', '-Wl,-s', '-I', work,
-         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'TotK-Setup.exe'], env=env)
+         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'TSword-Setup.exe'], env=env)
 
 
 # ---- checks ----------------------------------------------------------------------------------------------------------
@@ -528,6 +528,14 @@ def check_bundle(out):
     shutil.rmtree(chk, ignore_errors=True)
     env = clean_env(out / 'python')
     py = out / 'python' / 'python.exe'
+    if os.environ.get('TSWORD_CI_NO_GPU'):   # (TSword) a CI machine without a Vulkan device: the host check would stop
+        print('bundle check: TSWORD_CI_NO_GPU: the installer pass is skipped (no Vulkan device here)')
+        r = subprocess.run([py, '-m', 'installer.gui', '--selftest'], cwd=out, env=env, capture_output=True, text=True,
+                           timeout=300)
+        if r.returncode:
+            sys.exit(f'bundle check: window selftest exit {r.returncode}\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}')
+        print('bundle check: the window built every screen in both languages and closed')
+        return
     r = subprocess.run([py, '-m', 'installer', '--lang', 'en-US', '--dest', chk / 'install', '--temp', chk / 'temp'],
                        cwd=out, env=env, capture_output=True, text=True, timeout=600)
     events = [json.loads(line) for line in r.stdout.splitlines() if line.startswith('{')]
@@ -597,6 +605,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--out', type=Path, required=True, help='release folder (replaced)')
     ap.add_argument('--zip', type=Path, help='also write the folder as this zip')
+    ap.add_argument('--ps5-kit', type=Path, help="(TSword) the TSword PS5 release's kit (TSword-PS5-kit.zip, unpacked): "
+                                                 'the PS5 export compiles the game code with it (ps5/ of the folder)')
     ap.add_argument('--prove', action='store_true', help='only run the compile-and-probe check on an existing folder')
     ap.add_argument('--cpu', choices=('v2', 'v3'), default='v3',
                     help='--prove: build and run the check for this CPU level (default v3)')
@@ -617,6 +627,8 @@ def main():
     runtime_lib(out, llvm, pgo)
     build_sources(out, pgo)
     build_launcher(out, llvm)
+    if args.ps5_kit:   # (TSword) installer/steps.py Ps5Export: root/ps5
+        copy_tree(args.ps5_kit.resolve(), out / 'ps5')
     collect_licenses(out)
     check_folder(out)
     check_bundle(out)

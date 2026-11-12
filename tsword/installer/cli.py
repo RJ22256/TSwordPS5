@@ -63,6 +63,8 @@ def main(argv=None):
     ap.add_argument('--verify', action='store_true', help='hash every kept file, also those this release made')
     ap.add_argument('--dlss', action='store_true', help="download NVIDIA's nvngx_dlss.dll (NVIDIA RTX SDK license) next "
                                                       'to the game, for dlaa and the DLSS modes')
+    ap.add_argument('--ps5', action='store_true', help='(TSword) also export the game for TSword on the PS5 into '
+                                                     '<dest>/PS5 (installer/steps.py Ps5Export)')
     args = ap.parse_args(argv)
 
     # The window cancels with Ctrl+Break to the installer's process group (CREATE_NEW_PROCESS_GROUP), which also reaches

@@ -1,0 +1,103 @@
+# TSword Setup: the PC release - TotK Recomp's Windows setup (tsword/, tools/make_release.py) with the PS5 export
+# (installer/steps.py Ps5Export, tools/build_ps5.py) and the PS5 kit of a TSword PS5 release (its TSword-PS5-kit.zip:
+# the console's headers, what its eboot exports, the game code id), so the game code it builds for the console is what
+# that eboot loads. Started by hand; the zip is published as a release of this repository.
+name: TSword Setup (PC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ps5_release:
+        description: "The TSword PS5 release (tag) whose PS5 kit this setup carries, e.g. v0.3.0-m4"
+        required: true
+      release:
+        description: "Publish TSword Setup as a release with this tag (e.g. pc-0.1.0); empty: none"
+        required: false
+        default: ""
+      release_notes:
+        description: "Release notes: a Markdown file in the repository"
+        required: false
+        default: ""
+
+jobs:
+  setup:
+    runs-on: windows-2025
+    timeout-minutes: 240
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: TSwordPS5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Tools (uv; MSYS2 gcc and make for hactool)
+        run: |
+          python -m pip install -q uv
+          uv --version; python --version; dotnet --version
+          /c/msys64/usr/bin/bash -lc 'pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-gcc make' > msys.log 2>&1 || { tail -30 msys.log; exit 1; }
+          echo "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer" >> "$GITHUB_PATH"
+      - name: refs/MacNativeGames (the shader list's history, the translator's vendor tree)
+        working-directory: TSwordPS5/tsword
+        run: |
+          pin=$(awk '$1 == "fetch" && $2 == "MacNativeGames" { print $4 }' tools/fetch_refs.sh)
+          list=$(sed -n "s/^MNG_COMMIT = '\([0-9a-f]*\)'.*/\1/p" tools/make_release.py)
+          d=refs/MacNativeGames
+          git init -q "$d"
+          git -C "$d" remote add origin https://github.com/ly05010419/MacNativeGames.git
+          git -C "$d" fetch -q --filter=blob:none origin "$pin" "$list"
+          git -C "$d" checkout -q "$pin"
+          git -C "$d" update-ref refs/remotes/origin/HEAD "$pin"
+          git -C "$d" log -1 --format='MacNativeGames %h %ci'
+      - name: hactool
+        working-directory: TSwordPS5/tsword
+        run: python tools/build_hactool.py
+      - name: The shader translator (totk_xlate.exe, NativeAOT)
+        working-directory: TSwordPS5/tsword
+        run: python tools/build_xlate.py
+      - name: The runtime library's layout (stand-in for a lifted version)
+        working-directory: TSwordPS5/tsword
+        run: |
+          # make_release.py builds the runtime library against a lifted version's layout.h, of which the runtime reads
+          # only what every version shares (MOD_COUNT, MOD_MAIN_BASE): the PS5 title's stand-in (ps5/tsword/include)
+          mkdir -p generated/v143
+          cp ../ps5/tsword/include/layout.h generated/v143/layout.h
+          echo '[{"name": "main", "base": "0x7000000000", "size": "0x8000000"}]' > generated/v143/layout.json
+      - name: The PS5 kit of the TSword PS5 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PS5: ${{ inputs.ps5_release }}
+        run: |
+          gh release download "$PS5" -R "$GITHUB_REPOSITORY" -p TSword-PS5-kit.zip -D kit
+          cd kit && unzip -q TSword-PS5-kit.zip && ls TSword-PS5-kit && cat TSword-PS5-kit/gamecode.id
+          want=$(cat TSword-PS5-kit/gamecode.id)
+          have=$(python ../TSwordPS5/tsword/tools/build_ps5.py --id-only --runtime ../TSwordPS5/tsword/runtime)
+          [[ $want == "$have" ]] || { echo "::error::$PS5's kit is for game code id $want, this tree is $have"; exit 1; }
+      - name: TSword Setup (tools/make_release.py)
+        working-directory: TSwordPS5/tsword
+        env:
+          TSWORD_CI_NO_GPU: "1"
+        run: |
+          python tools/make_release.py --out build/release/TSword-Setup --zip ../../TSword-Setup-windows.zip \
+            --ps5-kit ../../kit/TSword-PS5-kit
+          cd ../.. && sha256sum TSword-Setup-windows.zip > TSword-Setup-windows.zip.sha256 && ls -la TSword-Setup-windows.zip
+      - name: Release
+        if: ${{ inputs.release != '' }}
+        working-directory: TSwordPS5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release }}
+          NOTES: ${{ inputs.release_notes }}
+        run: |
+          mv ../TSword-Setup-windows.zip "../TSword-Setup-$TAG-windows.zip"
+          mv ../TSword-Setup-windows.zip.sha256 "../TSword-Setup-$TAG-windows.zip.sha256"
+          if [[ -n "$NOTES" && -f "$NOTES" ]]; then n=(--notes-file "$NOTES"); else n=(--notes "TSword Setup $TAG"); fi
+          gh release create "$TAG" "../TSword-Setup-$TAG-windows.zip" "../TSword-Setup-$TAG-windows.zip.sha256" \
+            --target "$GITHUB_SHA" --title "TSword Setup $TAG" --prerelease "${n[@]}"

@@ -1,0 +1,346 @@
+diff --git a/installer/cli.py b/installer/cli.py
+index 14fa57e..642ff3c 100644
+--- a/installer/cli.py
++++ b/installer/cli.py
+@@ -63,6 +63,8 @@ def main(argv=None):
+     ap.add_argument('--verify', action='store_true', help='hash every kept file, also those this release made')
+     ap.add_argument('--dlss', action='store_true', help="download NVIDIA's nvngx_dlss.dll (NVIDIA RTX SDK license) next "
+                                                       'to the game, for dlaa and the DLSS modes')
++    ap.add_argument('--ps5', action='store_true', help='(TSword) also export the game for TSword on the PS5 into '
++                                                     '<dest>/PS5 (installer/steps.py Ps5Export)')
+     args = ap.parse_args(argv)
+ 
+     # The window cancels with Ctrl+Break to the installer's process group (CREATE_NEW_PROCESS_GROUP), which also reaches
+diff --git a/installer/gui.py b/installer/gui.py
+index 9c0dc1f..4d9592d 100644
+--- a/installer/gui.py
++++ b/installer/gui.py
+@@ -273,6 +273,12 @@ class App:
+         self.bind_text(dlss, 'text', 'ui.dlss')
+         dlss.pack(anchor='w', pady=(dpi.px(8), 0))
+         self.label(f, 'ui.dlss_help', wraplength=WRAP, justify='left').pack(anchor='w', padx=(dpi.px(22), 0))
++        # (TSword) the PS5 export, on by default: what this release is for
++        self.ps5_var = tk.BooleanVar(value=True)
++        ps5 = ttk.Checkbutton(f, variable=self.ps5_var)
++        self.bind_text(ps5, 'text', 'ui.ps5')
++        ps5.pack(anchor='w', pady=(dpi.px(8), 0))
++        self.label(f, 'ui.ps5_help', wraplength=WRAP, justify='left').pack(anchor='w', padx=(dpi.px(22), 0))
+         self.update_hint = ttk.Label(f, wraplength=WRAP, justify='left')
+         self.update_hint.pack(anchor='w', pady=(dpi.px(8), 0))
+         self.form_error = ttk.Label(f, style='Err.TLabel', wraplength=WRAP, justify='left')
+@@ -344,7 +350,7 @@ class App:
+     def form(self):
+         return Form(base=self.vars['base'].get(), update=self.vars['update'].get(), keys=self.vars['keys'].get(),
+                     firmware=self.vars['firmware'].get(), lang=self.selected_lang(), dest=self.vars['dest'].get(),
+-                    dlss=self.dlss_var.get())
++                    dlss=self.dlss_var.get(), ps5=self.ps5_var.get())
+ 
+     def set_prefill(self, name, value):
+         self.programmatic = True
+@@ -619,7 +625,7 @@ class App:
+ # ---- self test ---------------------------------------------------------------------------------------------------
+ 
+ SAMPLE_START = {'type': 'start', 'release': 'selftest', 'mode': 'install', 'dest': 'Z:/selftest/TotK', 'log': 'D:\\log.txt',
+-                'steps': ['check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'dlss', 'cleanup']}
++                'steps': ['check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'dlss', 'ps5', 'cleanup']}
+ SAMPLE_RUN = [
+     SAMPLE_START,
+     {'type': 'plan', 'run': ['check', 'fonts', 'extract'], 'skip': {}},
+diff --git a/installer/guilogic.py b/installer/guilogic.py
+index f17a2dc..4bd3d91 100644
+--- a/installer/guilogic.py
++++ b/installer/guilogic.py
+@@ -27,7 +27,7 @@ TEXT = Path(__file__).resolve().parent / 'text'
+ UI_LANGUAGES = ('en', 'ru', 'pt-BR', 'zh-Hans')
+ # what the language switch in the window's corner shows for each
+ UI_LANGUAGE_LABELS = {'en': 'English', 'ru': 'Русский', 'pt-BR': 'Português (Brasil)', 'zh-Hans': '简体中文'}
+-STEP_ORDER = ('check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'dlss', 'cleanup')
++STEP_ORDER = ('check', 'fonts', 'extract', 'lift', 'compile', 'prepare', 'dlss', 'ps5', 'cleanup')
+ # message parameter -> catalog id prefix of the names that replace its raw values
+ PARAM_NAMES = {'lang': 'lang.', 'known': 'lang.', 'step': 'step.', 'input': 'param.input.'}
+ LANG_RU = 0x19   # primary language id of Russian in a Windows LANGID
+@@ -138,6 +138,7 @@ class Form:
+     lang: str = ''
+     dest: str = ''
+     dlss: bool = False
++    ps5: bool = False
+ 
+     def installed_state(self):
+         """The recorded state of the install folder (totk-install.json), or None. Never raises."""
+@@ -190,6 +191,8 @@ class Form:
+             cmd.append('--verify')
+         if self.dlss:
+             cmd.append('--dlss')
++        if self.ps5:
++            cmd.append('--ps5')
+         return cmd
+ 
+ 
+diff --git a/installer/steps.py b/installer/steps.py
+index 49ce815..5bf4963 100644
+--- a/installer/steps.py
++++ b/installer/steps.py
+@@ -1242,6 +1242,151 @@ class Dlss(Step):
+         return {'installed': DLSS_VERSION}
+ 
+ 
++# ---- (TSword) the PS5 export
++
++# What the PS5's RADV (gfx10.3) answers the shader translator: runtime/gfx_shader.c gfx_shader_set_host, its
++# TSWORD_PS5_HOST - Float64, storage alignment, subgroup sizes (vertex, fragment, compute), gather bits, zeroed locals
++PS5_HOST = '1,0,64,32,32,8,1'
++PS5_DIR = 'PS5'
++# beside the eboot on the console: the install folder's own, linked into PS5/ (the RomFS overlays of 16:9: a TV)
++PS5_LINKED = ('exefs', 'romfs', 'shared-fonts', 'romfs-patches', 'romfs-patches-xbox', 'romfs-patches-xbox-label',
++              'romfs-patches-pc')
++
++
++def link_tree(src, dst):
++    """dst as a copy of src made of hard links (the same disk: no space, seconds), else of copies."""
++    if src.is_file():
++        dst.parent.mkdir(parents=True, exist_ok=True)
++        if dst.exists():
++            dst.unlink()
++        try:
++            os.link(src, dst)
++        except OSError:
++            shutil.copy2(src, dst)
++        return
++    for p in src.rglob('*'):
++        if p.is_file():
++            link_tree(p, dst / p.relative_to(src))
++
++
++class Ps5Export(Step):
++    """(TSword) With --ps5: <install folder>/PS5, everything TSword's PS5 title (TSwordPS5, PPSA99778) needs beside its
++    eboot.bin, from this install: the game code built for the console (tools/build_ps5.py: tsgame.so), the shaders
++    translated with the PS5's answers (totk.exe --prepare-shaders with TSWORD_PS5_HOST, then packed), the RomFS index,
++    and the game files linked in. The player copies the folder's contents into /data/homebrew/PPSA99778 on the
++    console. The release's ps5/ kit says which TSword PS5 release it is for."""
++
++    id = 'ps5'
++
++    def key(self, ctx):
++        if not getattr(ctx.options, 'ps5', False):
++            return fingerprint('ps5-1', 'off')
++        kit = ctx.layout.root / 'ps5'
++        return fingerprint('ps5-1', ctx.keys['lift'], runtime_key(ctx), kit / 'gamecode.id', kit / 'exports.txt',
++                           ctx.layout.tools / 'build_ps5.py', ctx.layout.xlate, PS5_HOST,
++                           ctx.layout.pgo(game_version(ctx)) or 'no profile', *self.shader_inputs(ctx))
++
++    def shader_inputs(self, ctx):
++        """The inputs the console met and the export had not translated (its shader-cache/in, copied back into
++        PS5/shader-cache/in): new ones translate on the next run."""
++        d = ctx.dest / PS5_DIR / 'shader-cache' / 'in'
++        return [str(len(list(d.glob('*.in'))))] if d.is_dir() else []
++
++    def current(self, ctx, record):
++        if not getattr(ctx.options, 'ps5', False):
++            return True
++        out = ctx.dest / PS5_DIR
++        return all((out / n).is_file() for n in ('tsgame.so', 'tsgame.so.id', 'shader-cache/shader-cache.pack'))
++
++    def run(self, ctx):
++        if not getattr(ctx.options, 'ps5', False):
++            return {}
++        layout, rep, dest = ctx.layout, ctx.reporter, ctx.dest
++        kit, out = layout.root / 'ps5', dest / PS5_DIR
++        if not (kit / 'include').is_dir():
++            raise InstallError('ps5.kit_missing', path=str(kit))
++        out.mkdir(exist_ok=True)
++        phase = ['compile']
++
++        def parse(line):
++            m = NINJA_LINE.match(line)
++            if m:
++                rep.progress('ps5', 'compile', int(m.group(1)), int(m.group(2)), 'objects')
++
++        rep.progress('ps5', 'compile', force=True)
++        build = ctx.temp / 'build-ps5'
++        pgo = layout.pgo(game_version(ctx))
++        code, log = run_tool(ctx, 'ps5', layout.tools / 'build_ps5.py', [
++            '--gen', ctx.temp / 'gen', '--out', build, '--toolchain', layout.llvm, '--runtime', layout.runtime,
++            '--ps5', kit, '--version', version_tag(game_version(ctx)), '--expected', layout.expected(game_version(ctx)),
++            '--romfs', dest / 'romfs', '--ninja', layout.ninja, *(['--pgo', pgo] if pgo else ())], parse)
++        if code or not (build / 'tsgame.so').is_file():
++            raise InstallError('ps5.failed', code=code, log=str(log))
++        for name in ('tsgame.so', 'tsgame.so.id', 'romfs-index.bin'):
++            replace_file(build / name, out / name)
++        del phase
++
++        # The shaders: the PC's translator with the console's answers, into PS5/shader-cache (the seed files of the
++        # prepare step, written again beside them)
++        rep.progress('ps5', 'shaders', force=True)
++        shader_list = layout.shader_list
++        if not shader_list:
++            shader_list = ctx.temp / 'shader_list.tsv'
++            shader_list.write_text(shader_list_text(layout), encoding='utf-8', newline='\n')
++        code, log = run_tool(ctx, 'ps5', layout.tools / 'prepare_shaders.py',
++                             [dest, '--version', version_tag(game_version(ctx)), '--romfs', dest / 'romfs', '--exefs',
++                              dest / 'exefs', '--list', shader_list, '--no-run'])
++        if code:
++            raise InstallError('ps5.shaders_failed', code=code, log=str(log))
++        for name in ('seed-programs.bin', 'seed-answers.bin'):
++            replace_file(dest / name, out / name)
++        xlate = dest / layout.xlate.name
++        env = dict(os.environ, TSWORD_PS5_HOST=PS5_HOST, TOTK_SHADER_CACHE=str(out / 'shader-cache'),
++                   TOTK_PIPELINE_CACHE=str(out / 'pipeline-cache.bin'), TOTK_XLATE=str(xlate))
++        exe = dest / ('totk' + EXE)
++        logs = ctx.temp / 'logs'
++        with open(logs / 'ps5-shaders.log', 'w', encoding='utf-8', errors='replace') as f:
++            def counted(line):
++                m = TRANSLATED.search(line)
++                if m:
++                    rep.progress('ps5', 'shaders', int(m.group(1)), int(m.group(2)), 'shaders')
++            proc = subprocess.Popen([str(exe), '--prepare-shaders'], cwd=str(dest), env=env, stdout=subprocess.PIPE,
++                                    stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
++            for line in proc.stdout:
++                f.write(line)
++                counted(line.rstrip())
++            code = proc.wait()
++        if code or not (out / 'shader-prepared.bin').is_file():
++            raise InstallError('ps5.shaders_failed', code=code, log=str(logs / 'ps5-shaders.log'))
++        rep.progress('ps5', 'pack', force=True)
++        code, log = run_tool(ctx, 'ps5', layout.tools / 'pack_shader_cache.py', [out / 'shader-cache'])
++        if code:
++            raise InstallError('prepare.pack_failed', code=code, log=str(log))
++        for name in ('seed-programs.bin', 'seed-answers.bin', 'pipeline-cache.bin'):
++            remove(out / name)
++        if xlate.with_suffix('.id').is_file():
++            replace_file(xlate.with_suffix('.id'), out / 'totk_xlate.id')
++        (out / 'tsword-shader-host.txt').write_text(PS5_HOST + '\n', encoding='ascii', newline='\n')
++
++        # The game files and settings, beside them
++        rep.progress('ps5', 'files', force=True)
++        for name in PS5_LINKED:
++            if (dest / name).exists():
++                remove(out / name)
++                link_tree(dest / name, out / name)
++        ini.write(out, ctx.lang, layout.ini_example)
++        (out / 'profile').mkdir(exist_ok=True)
++        (out / 'COPY-TO-PS5.txt').write_text(
++            'TSword for the PS5 (TSwordPS5, title PPSA99778)\n\n'
++            'Copy everything in this folder into /data/homebrew/PPSA99778/ on the console (over FTP), beside the\n'
++            'eboot.bin of the TSwordPS5 release this TSword Setup was made for. The game files here are hard links to\n'
++            'the install folder\'s: they take no extra space on this disk.\n\n'
++            'Shaders the console met that were not translated here are kept on the console in shader-cache/in/.\n'
++            'Copy that folder back into this one (PS5/shader-cache/in) and run the setup again: the export translates\n'
++            'them too.\n', encoding='utf-8', newline='\n')
++        return {'gamecode_id': (out / 'tsgame.so.id').read_text(encoding='utf-8').strip()}
++
++
+ # ---- 8. clean up
+ 
+ class Cleanup(Step):
+@@ -1310,4 +1455,4 @@ def romfs_problem(romfs, expected):
+ 
+ 
+ def all_steps():
+-    return [Check(), Fonts(), Extract(), Lift(), Compile(), Prepare(), Dlss(), Cleanup()]
++    return [Check(), Fonts(), Extract(), Lift(), Compile(), Prepare(), Dlss(), Ps5Export(), Cleanup()]
+diff --git a/installer/text/en.json b/installer/text/en.json
+index 4561869..2b0a5e0 100644
+--- a/installer/text/en.json
++++ b/installer/text/en.json
+@@ -6,6 +6,7 @@
+  "step.compile": "Compiling {game_exe}",
+  "step.prepare": "Preparing the shaders",
+  "step.dlss": "Downloading NVIDIA DLSS",
++ "step.ps5": "Exporting for the PS5 (TSword)",
+  "step.cleanup": "Cleaning up",
+ 
+  "phase.check.host": "Checking the processor and the graphics card",
+@@ -34,6 +35,10 @@
+  "phase.prepare.libraries": "Building the shaders for the graphics driver",
+  "phase.prepare.pack": "Packing the shader cache into one file",
+  "phase.dlss.download": "Downloading nvngx_dlss.dll from NVIDIA's DLSS SDK",
++ "phase.ps5.compile": "Compiling the game code for the PS5",
++ "phase.ps5.shaders": "Translating the shaders for the PS5",
++ "phase.ps5.pack": "Packing the PS5's shader cache",
++ "phase.ps5.files": "Putting the game files into the PS5 folder",
+  "phase.cleanup.ini": "Writing totk.ini",
+  "phase.cleanup.temp": "Removing temporary files",
+ 
+@@ -90,6 +95,9 @@
+  "fonts.copy_failed": "The shared fonts cannot be copied into {path}: {detail}",
+  "lift.failed": "Translating the game code failed (exit code {code}). Details: {log}",
+  "compile.failed": "Compiling {game_exe} failed (exit code {code}). Details: {log}",
++ "ps5.failed": "Compiling the game code for the PS5 failed (exit code {code}). Details: {log}",
++ "ps5.shaders_failed": "Translating the shaders for the PS5 failed (exit code {code}). Details: {log}",
++ "ps5.kit_missing": "This setup has no PS5 kit ({path}): use a TSword Setup release.",
+  "compile.exe_in_use": "{path} is in use. Close the game and run the installer again.",
+  "prepare.xlate_in_use": "{path} is in use. Close the game, end any totk_xlate process left from an earlier run, then run the installer again.",
+  "prepare.shader_list_missing": "The shader list is missing.",
+@@ -109,7 +117,7 @@
+  "warn.dlss_kept": "A DLSS library is already in the install folder ({path}); the setup keeps it.",
+  "warn.dlss_download_failed": "NVIDIA DLSS could not be downloaded from {url}: {detail}. The game runs without it; the next setup run tries again.",
+ 
+- "ui.title": "TotK Setup",
++ "ui.title": "TSword Setup",
+  "ui.rebuild_title": "Rebuilding the game for your mods",
+  "ui.start_game": "Start the game",
+  "ui.version": "version {version}",
+@@ -130,6 +138,8 @@
+  "ui.pick_dest": "Choose the install folder",
+  "ui.firmware_help": "For Chinese, Korean and Traditional Chinese text: the firmware's Contents/registered folder, for example from Ryujinx or Yuzu. The setup copies the Switch system fonts from it into the install folder.",
+  "ui.dlss": "Download NVIDIA DLSS (nvngx_dlss.dll) for NVIDIA RTX graphics cards",
++ "ui.ps5": "Export for PS5 (TSword, PPSA99778)",
++ "ui.ps5_help": "Also builds the game for TSword on a jailbroken PS5 into the PS5 folder of the install folder: copy its contents into /data/homebrew/PPSA99778 on the console. It takes about as long again as the PC's build.",
+  "ui.dlss_help": "From NVIDIA's DLSS SDK on GitHub, under NVIDIA's RTX SDK license (github.com/NVIDIA/DLSS). It makes the dlaa and DLSS settings work; without it they do nothing.",
+  "ui.compressed_help": "Compressed NSZ and XCZ files work as they are: the setup unpacks them by itself (until the game data is extracted, that needs as much free space as the unpacked files take).",
+  "ui.type_game": "Game files (NSP, XCI, NSZ, XCZ)",
+diff --git a/tools/make_release.py b/tools/make_release.py
+index 5114d6e..bd29f7b 100644
+--- a/tools/make_release.py
++++ b/tools/make_release.py
+@@ -115,7 +115,7 @@ LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
+ TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'button_icons.py', 'check_content.py', 'check_isa.py', 'extract.py',
+                'hostmem.py', 'make_romfs_patches.py', 'ncz.py', 'pack_shader_cache.py', 'prepare_shaders.py',
+                'romfs_index.py', 'shader_census.py', 'shader_list.py', 'ultrawide_layout.py', 'cheats.py',
+-               'exefs_patches.py']
++               'exefs_patches.py', 'build_ps5.py']   # (TSword) build_ps5.py: the PS5 export's game code
+ TOOLS_DIRS = ['vendor/macnativegames', 'data']   # data/: expected hashes
+ RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
+ 
+@@ -506,7 +506,7 @@ def build_launcher(out, llvm):
+     run([llvm / 'bin' / 'llvm-windres.exe', '-I', ROOT / 'runtime', '-O', 'coff',
+          ROOT / 'installer' / 'launcher' / 'launcher.rc', '-o', res], env=env)
+     run([llvm / 'bin' / 'clang.exe', '-O2', '-mwindows', '-Wall', '-Wl,-s', '-I', work,
+-         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'TotK-Setup.exe'], env=env)
++         ROOT / 'installer' / 'launcher' / 'launcher.c', res, '-o', out / 'TSword-Setup.exe'], env=env)
+ 
+ 
+ # ---- checks ----------------------------------------------------------------------------------------------------------
+@@ -528,6 +528,14 @@ def check_bundle(out):
+     shutil.rmtree(chk, ignore_errors=True)
+     env = clean_env(out / 'python')
+     py = out / 'python' / 'python.exe'
++    if os.environ.get('TSWORD_CI_NO_GPU'):   # (TSword) a CI machine without a Vulkan device: the host check would stop
++        print('bundle check: TSWORD_CI_NO_GPU: the installer pass is skipped (no Vulkan device here)')
++        r = subprocess.run([py, '-m', 'installer.gui', '--selftest'], cwd=out, env=env, capture_output=True, text=True,
++                           timeout=300)
++        if r.returncode:
++            sys.exit(f'bundle check: window selftest exit {r.returncode}\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}')
++        print('bundle check: the window built every screen in both languages and closed')
++        return
+     r = subprocess.run([py, '-m', 'installer', '--lang', 'en-US', '--dest', chk / 'install', '--temp', chk / 'temp'],
+                        cwd=out, env=env, capture_output=True, text=True, timeout=600)
+     events = [json.loads(line) for line in r.stdout.splitlines() if line.startswith('{')]
+@@ -597,6 +605,8 @@ def main():
+     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+     ap.add_argument('--out', type=Path, required=True, help='release folder (replaced)')
+     ap.add_argument('--zip', type=Path, help='also write the folder as this zip')
++    ap.add_argument('--ps5-kit', type=Path, help="(TSword) the TSword PS5 release's kit (TSword-PS5-kit.zip, unpacked): "
++                                                 'the PS5 export compiles the game code with it (ps5/ of the folder)')
+     ap.add_argument('--prove', action='store_true', help='only run the compile-and-probe check on an existing folder')
+     ap.add_argument('--cpu', choices=('v2', 'v3'), default='v3',
+                     help='--prove: build and run the check for this CPU level (default v3)')
+@@ -617,6 +627,8 @@ def main():
+     runtime_lib(out, llvm, pgo)
+     build_sources(out, pgo)
+     build_launcher(out, llvm)
++    if args.ps5_kit:   # (TSword) installer/steps.py Ps5Export: root/ps5
++        copy_tree(args.ps5_kit.resolve(), out / 'ps5')
+     collect_licenses(out)
+     check_folder(out)
+     check_bundle(out)

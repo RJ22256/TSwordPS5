@@ -1242,6 +1242,151 @@ class Dlss(Step):
         return {'installed': DLSS_VERSION}
 
 
+# ---- (TSword) the PS5 export
+
+# What the PS5's RADV (gfx10.3) answers the shader translator: runtime/gfx_shader.c gfx_shader_set_host, its
+# TSWORD_PS5_HOST - Float64, storage alignment, subgroup sizes (vertex, fragment, compute), gather bits, zeroed locals
+PS5_HOST = '1,0,64,32,32,8,1'
+PS5_DIR = 'PS5'
+# beside the eboot on the console: the install folder's own, linked into PS5/ (the RomFS overlays of 16:9: a TV)
+PS5_LINKED = ('exefs', 'romfs', 'shared-fonts', 'romfs-patches', 'romfs-patches-xbox', 'romfs-patches-xbox-label',
+              'romfs-patches-pc')
+
+
+def link_tree(src, dst):
+    """dst as a copy of src made of hard links (the same disk: no space, seconds), else of copies."""
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            dst.unlink()
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+        return
+    for p in src.rglob('*'):
+        if p.is_file():
+            link_tree(p, dst / p.relative_to(src))
+
+
+class Ps5Export(Step):
+    """(TSword) With --ps5: <install folder>/PS5, everything TSword's PS5 title (TSwordPS5, PPSA99778) needs beside its
+    eboot.bin, from this install: the game code built for the console (tools/build_ps5.py: tsgame.so), the shaders
+    translated with the PS5's answers (totk.exe --prepare-shaders with TSWORD_PS5_HOST, then packed), the RomFS index,
+    and the game files linked in. The player copies the folder's contents into /data/homebrew/PPSA99778 on the
+    console. The release's ps5/ kit says which TSword PS5 release it is for."""
+
+    id = 'ps5'
+
+    def key(self, ctx):
+        if not getattr(ctx.options, 'ps5', False):
+            return fingerprint('ps5-1', 'off')
+        kit = ctx.layout.root / 'ps5'
+        return fingerprint('ps5-1', ctx.keys['lift'], runtime_key(ctx), kit / 'gamecode.id', kit / 'exports.txt',
+                           ctx.layout.tools / 'build_ps5.py', ctx.layout.xlate, PS5_HOST,
+                           ctx.layout.pgo(game_version(ctx)) or 'no profile', *self.shader_inputs(ctx))
+
+    def shader_inputs(self, ctx):
+        """The inputs the console met and the export had not translated (its shader-cache/in, copied back into
+        PS5/shader-cache/in): new ones translate on the next run."""
+        d = ctx.dest / PS5_DIR / 'shader-cache' / 'in'
+        return [str(len(list(d.glob('*.in'))))] if d.is_dir() else []
+
+    def current(self, ctx, record):
+        if not getattr(ctx.options, 'ps5', False):
+            return True
+        out = ctx.dest / PS5_DIR
+        return all((out / n).is_file() for n in ('tsgame.so', 'tsgame.so.id', 'shader-cache/shader-cache.pack'))
+
+    def run(self, ctx):
+        if not getattr(ctx.options, 'ps5', False):
+            return {}
+        layout, rep, dest = ctx.layout, ctx.reporter, ctx.dest
+        kit, out = layout.root / 'ps5', dest / PS5_DIR
+        if not (kit / 'include').is_dir():
+            raise InstallError('ps5.kit_missing', path=str(kit))
+        out.mkdir(exist_ok=True)
+        phase = ['compile']
+
+        def parse(line):
+            m = NINJA_LINE.match(line)
+            if m:
+                rep.progress('ps5', 'compile', int(m.group(1)), int(m.group(2)), 'objects')
+
+        rep.progress('ps5', 'compile', force=True)
+        build = ctx.temp / 'build-ps5'
+        pgo = layout.pgo(game_version(ctx))
+        code, log = run_tool(ctx, 'ps5', layout.tools / 'build_ps5.py', [
+            '--gen', ctx.temp / 'gen', '--out', build, '--toolchain', layout.llvm, '--runtime', layout.runtime,
+            '--ps5', kit, '--version', version_tag(game_version(ctx)), '--expected', layout.expected(game_version(ctx)),
+            '--romfs', dest / 'romfs', '--ninja', layout.ninja, *(['--pgo', pgo] if pgo else ())], parse)
+        if code or not (build / 'tsgame.so').is_file():
+            raise InstallError('ps5.failed', code=code, log=str(log))
+        for name in ('tsgame.so', 'tsgame.so.id', 'romfs-index.bin'):
+            replace_file(build / name, out / name)
+        del phase
+
+        # The shaders: the PC's translator with the console's answers, into PS5/shader-cache (the seed files of the
+        # prepare step, written again beside them)
+        rep.progress('ps5', 'shaders', force=True)
+        shader_list = layout.shader_list
+        if not shader_list:
+            shader_list = ctx.temp / 'shader_list.tsv'
+            shader_list.write_text(shader_list_text(layout), encoding='utf-8', newline='\n')
+        code, log = run_tool(ctx, 'ps5', layout.tools / 'prepare_shaders.py',
+                             [dest, '--version', version_tag(game_version(ctx)), '--romfs', dest / 'romfs', '--exefs',
+                              dest / 'exefs', '--list', shader_list, '--no-run'])
+        if code:
+            raise InstallError('ps5.shaders_failed', code=code, log=str(log))
+        for name in ('seed-programs.bin', 'seed-answers.bin'):
+            replace_file(dest / name, out / name)
+        xlate = dest / layout.xlate.name
+        env = dict(os.environ, TSWORD_PS5_HOST=PS5_HOST, TOTK_SHADER_CACHE=str(out / 'shader-cache'),
+                   TOTK_PIPELINE_CACHE=str(out / 'pipeline-cache.bin'), TOTK_XLATE=str(xlate))
+        exe = dest / ('totk' + EXE)
+        logs = ctx.temp / 'logs'
+        with open(logs / 'ps5-shaders.log', 'w', encoding='utf-8', errors='replace') as f:
+            def counted(line):
+                m = TRANSLATED.search(line)
+                if m:
+                    rep.progress('ps5', 'shaders', int(m.group(1)), int(m.group(2)), 'shaders')
+            proc = subprocess.Popen([str(exe), '--prepare-shaders'], cwd=str(dest), env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+            for line in proc.stdout:
+                f.write(line)
+                counted(line.rstrip())
+            code = proc.wait()
+        if code or not (out / 'shader-prepared.bin').is_file():
+            raise InstallError('ps5.shaders_failed', code=code, log=str(logs / 'ps5-shaders.log'))
+        rep.progress('ps5', 'pack', force=True)
+        code, log = run_tool(ctx, 'ps5', layout.tools / 'pack_shader_cache.py', [out / 'shader-cache'])
+        if code:
+            raise InstallError('prepare.pack_failed', code=code, log=str(log))
+        for name in ('seed-programs.bin', 'seed-answers.bin', 'pipeline-cache.bin'):
+            remove(out / name)
+        if xlate.with_suffix('.id').is_file():
+            replace_file(xlate.with_suffix('.id'), out / 'totk_xlate.id')
+        (out / 'tsword-shader-host.txt').write_text(PS5_HOST + '\n', encoding='ascii', newline='\n')
+
+        # The game files and settings, beside them
+        rep.progress('ps5', 'files', force=True)
+        for name in PS5_LINKED:
+            if (dest / name).exists():
+                remove(out / name)
+                link_tree(dest / name, out / name)
+        ini.write(out, ctx.lang, layout.ini_example)
+        (out / 'profile').mkdir(exist_ok=True)
+        (out / 'COPY-TO-PS5.txt').write_text(
+            'TSword for the PS5 (TSwordPS5, title PPSA99778)\n\n'
+            'Copy everything in this folder into /data/homebrew/PPSA99778/ on the console (over FTP), beside the\n'
+            'eboot.bin of the TSwordPS5 release this TSword Setup was made for. The game files here are hard links to\n'
+            'the install folder\'s: they take no extra space on this disk.\n\n'
+            'Shaders the console met that were not translated here are kept on the console in shader-cache/in/.\n'
+            'Copy that folder back into this one (PS5/shader-cache/in) and run the setup again: the export translates\n'
+            'them too.\n', encoding='utf-8', newline='\n')
+        return {'gamecode_id': (out / 'tsgame.so.id').read_text(encoding='utf-8').strip()}
+
+
 # ---- 8. clean up
 
 class Cleanup(Step):
@@ -1310,4 +1455,4 @@ def romfs_problem(romfs, expected):
 
 
 def all_steps():
-    return [Check(), Fonts(), Extract(), Lift(), Compile(), Prepare(), Dlss(), Cleanup()]
+    return [Check(), Fonts(), Extract(), Lift(), Compile(), Prepare(), Dlss(), Ps5Export(), Cleanup()]
