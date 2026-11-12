@@ -83,9 +83,9 @@ static void scan_pages(range_t *r, uintptr_t a, size_t len, int count) {
         }
         atomic_fetch_add(&g_scans, 1);
         uint64_t g = n && count ? atomic_fetch_add(&g_now, 1) + 1 : 0;
-        for (int i = 0; i < n; i++) {
-            uintptr_t p = (pages[i] - r->base) / 4096;
-            if (count) atomic_store(&r->gen[p], g);
+        for (int i = 0; i < n && count; i++) {   // (a page of pg bytes: 16 KiB on the PS5, its 4 KiB parts in the range)
+            uintptr_t q = pages[i] < r->base ? r->base : (uintptr_t)pages[i], qe = pages[i] + pg < r->end ? (uintptr_t)(pages[i] + pg) : r->end;
+            for (; q < qe; q += 4096) atomic_store(&r->gen[(q - r->base) / 4096], g);
         }
         atomic_fetch_add(&g_scan_pages, (uint64_t)n);
         if (n < 512) break;   // all of the range reported; with 512 there may be more: from after the last one

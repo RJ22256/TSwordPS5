@@ -119,6 +119,9 @@ jobs:
           nasm -v
           sdk=$(bash ps5/tools/setup-sdk.sh)
           bash ps5/ut/deps.sh "$sdk" build/ut-deps
+      - name: The PS5 write watch's test (on Linux, the console's calls stood in for)
+        working-directory: TSwordPS5
+        run: CC=clang-18 UT_DEPS=build/ut-deps bash ps5/ut/tests/write-watch/run.sh 8 800
       - name: TSword on UltraTears as the title (eboot.bin)
         working-directory: TSwordPS5
         run: |

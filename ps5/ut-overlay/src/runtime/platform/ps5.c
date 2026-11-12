@@ -4,9 +4,9 @@
 //  - guest memory is direct memory: a title's anonymous mappings come from its small flexible budget, so the guest
 //    window is a reserved virtual range (ps5platform/shm.h) backed in 64 KiB units on first touch (the crash handler)
 //    and before the kernel itself writes there (plat_commit: file reads)
-//  - no write watch (the console has neither userfaultfd nor GetWriteWatch): plat_written_pages answers -1, and the
-//    graphics code imports game memory and compares texture contents instead (gfx/nvn/nvn_dirty_win.c, vkb_tex.c), as
-//    on Windows with imports
+//  - the write watch (Windows' GetWriteWatch, Linux's userfaultfd: the console has neither) by page protection: a page
+//    the graphics code has looked at is made read-only, keeping its GPU access, and its first write faults, marks it
+//    written and makes it writable again (below, "write watch")
 //  - thread stacks in direct memory too (ut_pthread_create below; the runtime is compiled with pthread_create named so)
 //  - no child processes, no re-exec, no terminal: stderr goes to ultratears.log in the title folder
 #include <SDL3/SDL.h>
@@ -26,6 +26,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <ps5platform/kernel.h>
 #include <ps5platform/shm.h>
 
 #include "../platform.h"
@@ -84,6 +85,11 @@ static bool lazy_commit(uint64_t fa) {
     return ok;
 }
 
+static void wp_forget(uint64_t lo, uint64_t hi);
+static void wp_unprotect(uint64_t lo, uint64_t hi);
+static void wp_game(uint64_t lo, uint64_t hi, bool writable);
+static bool wp_fault(uint64_t fa, bool write);
+
 static bool reserve_part(uint64_t lo, uint64_t hi) {
     int r = ps5_vrange_reserve_at((void *)(uintptr_t)lo, hi - lo);
     if (r) {
@@ -112,7 +118,7 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
     for (int i = 0; i < g_nparts; i++) {
         uint64_t a = lo > g_parts[i].lo ? lo : g_parts[i].lo, e = hi < g_parts[i].hi ? hi : g_parts[i].hi;
         if (a < e && ps5_vrange_decommit((void *)(uintptr_t)a, e - a)) return false;
-        if (a < e) mark(a, e, false);
+        if (a < e) mark(a, e, false), wp_forget(a, e);
     }
     return true;
 }
@@ -132,13 +138,256 @@ void plat_commit(uint64_t addr, uint64_t size) {
         a = run;
     }
     pthread_mutex_unlock(&g_commit_lock);
+    wp_unprotect(addr, addr + size);   // (the kernel's writes don't fault, and RADV's import makes the pages writable)
 }
 
 void plat_memory_map(void) {}
 
+// ---- write watch
+// What GetWriteWatch is on Windows (gfx/nvn/nvn_dirty_win.c reads it through plat_written_pages): the pages of a range
+// written since its last look, reset by the look. The console has no such thing, so it is made of page protection, as
+// emulators track guest writes: a page of a range looked at is made read-only (sceKernelMprotect, the CPU's write taken
+// away and everything else kept: RADV's import gave it GPU access, radv_ps5_memory_grant_gpu), its first write faults
+// (crash_handler -> wp_fault), which marks it written and makes it writable again. Without a write watch every texture
+// was compared by content every other submission (vkb_tex.c tex_content_changed, 16 MiB a submission) and the draws'
+// index buffers and the GPU's write-backs were taken as changed every time.
+//   - pages are the kernel's, 16 KiB (reported as such: *page)
+//   - a page's state and its protection change together, under the page's own lock (a byte; the fault handler takes it
+//     too, so it spins and yields, never sleeps): clean <=> read-only, written <=> writable. A look reads a clean page's
+//     state without the lock, so a page is marked written before it is made writable, and made read-only before it is
+//     marked clean. Without it a fault handler
+//     that made a page writable just after a look protected it left it writable and clean for a moment, and a write
+//     then was reported a look late (a test with 16 writing threads, 2026-11-12)
+//   - a write that lands while a look is protecting the page it reported is that look's: the caller reads the memory
+//     after the look (an upload, a copy), so it has it
+//   - the kernel's own writes don't fault but fail (EFAULT): before them the runtime calls plat_commit (host/fs.c,
+//     guest_prepare_write), which makes the range writable and written for a few looks; so does an import of game
+//     memory (backend_vk.c import_host), which RADV makes writable for the CPU and the GPU
+//   - a page found written HOT_AFTER looks in a row (a buffer the game writes every frame) stays writable and is reported
+//     written at every look (as with no watch) for a while, then tried again, waiting longer each time: a fault per page
+//     per frame would cost more than it saves
+//   - the game's own protection (plat_protect) is left alone: such a page is reported written at every look
+//   - a protection change that fails turns the watch off (all writable again, -1 from then on: the content checks)
+// TOTK_WRITE_WATCH=0 in ultratears.cfg (or the environment): off.
+#define WPAGE 0x4000ull
+#define WCHUNK_SHIFT 30   // the states in 1 GiB chunks, made when a range there is first looked at
+enum { W_OFF, W_DIRTY, W_CLEAN, W_HOT, W_GAME };   // OFF: not watched (writable); GAME: the game's protection
+enum { HOT_AFTER = 3, HOT_WAIT = 4, HOT_WAIT_MAX = 240, HOT_STRIKES_MAX = 6 };
+typedef struct { _Atomic uint8_t lock, state; uint8_t streak, wait, strikes; } WState;
+#define WCHUNK_PAGES ((1ull << WCHUNK_SHIFT) / WPAGE)
+#define CPU_RW (PS5_KERNEL_PROT_CPU_READ | PS5_KERNEL_PROT_CPU_WRITE)
+static _Atomic(WState *) *g_wchunks;
+static uint64_t g_nwchunks;
+static _Atomic int g_wp = -1;   // -1: not decided yet, 0: off, 1: on
+static pthread_mutex_t g_wp_lock = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic uint64_t g_wp_faults, g_wp_protects, g_wp_looks, g_wp_clean, g_wp_hot, g_wp_log_ns;
+
+static WState *wstate(uint64_t a, bool make) {
+    if (!g_wchunks || a < g_lo || a >= g_hi) return NULL;
+    uint64_t c = (a - g_lo) >> WCHUNK_SHIFT;
+    WState *w = atomic_load_explicit(&g_wchunks[c], memory_order_acquire);
+    if (!w && make) {
+        pthread_mutex_lock(&g_wp_lock);
+        w = atomic_load(&g_wchunks[c]);
+        if (!w && (w = calloc(WCHUNK_PAGES, sizeof *w))) atomic_store_explicit(&g_wchunks[c], w, memory_order_release);
+        pthread_mutex_unlock(&g_wp_lock);
+    }
+    return w ? &w[((a - g_lo) & ((1ull << WCHUNK_SHIFT) - 1)) / WPAGE] : NULL;
+}
+
+// The page's lock: held only around its state and protection change (no fault can come while it is held: nothing
+// writes the page then but other threads, which wait)
+static void wlock(WState *w) {
+    for (int n = 0; atomic_exchange_explicit(&w->lock, 1, memory_order_acquire); n++)
+        if (n > 64) sched_yield();
+}
+static void wunlock(WState *w) { atomic_store_explicit(&w->lock, 0, memory_order_release); }
+
+// A state change, with the counts of read-only and left-writable pages
+static void wset(WState *w, uint8_t st) {
+    uint8_t was = atomic_exchange(&w->state, st);
+    if (was == st) return;
+    if (was == W_CLEAN) atomic_fetch_sub(&g_wp_clean, 1);
+    if (was == W_HOT) atomic_fetch_sub(&g_wp_hot, 1);
+    if (st == W_CLEAN) atomic_fetch_add(&g_wp_clean, 1);
+    if (st == W_HOT) atomic_fetch_add(&g_wp_hot, 1);
+}
+
+static bool wp_on(void) {
+    if (g_wp < 0) {
+        pthread_mutex_lock(&g_wp_lock);
+        if (g_wp < 0) {
+            const char *e = getenv("TOTK_WRITE_WATCH");
+            g_nwchunks = g_backed ? ((g_hi - g_lo) >> WCHUNK_SHIFT) + 1 : 0;
+            g_wchunks = g_nwchunks && !(e && !strcmp(e, "0")) ? calloc(g_nwchunks, sizeof *g_wchunks) : NULL;
+            fprintf(stderr, "[ps5] write watch: %s\n", g_wchunks ? "on (page protection)" :
+                    e && !strcmp(e, "0") ? "off (TOTK_WRITE_WATCH=0): textures are compared by content" : "off (no memory)");
+            atomic_store(&g_wp, g_wchunks != NULL);
+        }
+        pthread_mutex_unlock(&g_wp_lock);
+    }
+    return atomic_load(&g_wp) > 0;
+}
+
+// The protection of the page at a, as the kernel has it (0: unknown)
+static uint32_t prot_of(uint64_t a) {
+    void *s, *e;
+    uint32_t prot = 0;
+    return sceKernelQueryMemoryProtection((void *)(uintptr_t)a, &s, &e, &prot) ? 0 : prot;
+}
+
+// The page at p (its lock held) writable, or read-only; its other protection (GPU access) kept. 0: done
+static int set_writable(uint64_t p, bool on) {
+    uint32_t prot = prot_of(p);
+    if (!prot) return -1;
+    uint32_t want = on ? prot | CPU_RW : (prot | PS5_KERNEL_PROT_CPU_READ) & ~(uint32_t)PS5_KERNEL_PROT_CPU_WRITE;
+    return want == prot ? 0 : sceKernelMprotect((void *)(uintptr_t)p, WPAGE, (int)want);
+}
+
+static void wp_off(const char *why, uint64_t a, int r) {
+    int on = 1;
+    if (!atomic_compare_exchange_strong(&g_wp, &on, 0)) return;
+    fprintf(stderr, "[ps5] write watch: off (%s at %llx: %x); textures are compared by content from now on\n", why,
+            (unsigned long long)a, r);
+    for (uint64_t c = 0; c < g_nwchunks; c++) {   // every page it protected writable again
+        WState *w = atomic_load(&g_wchunks[c]);
+        for (uint64_t i = 0; w && i < WCHUNK_PAGES; i++) {
+            if (atomic_load(&w[i].state) != W_CLEAN) continue;
+            wlock(&w[i]);
+            if (atomic_load(&w[i].state) == W_CLEAN) set_writable(g_lo + (c << WCHUNK_SHIFT) + i * WPAGE, true), wset(&w[i], W_OFF);
+            wunlock(&w[i]);
+        }
+    }
+}
+
+static void wp_log(void) {
+    uint64_t now = plat_now_ns(), last = atomic_load_explicit(&g_wp_log_ns, memory_order_relaxed);
+    if (now - last < 10000000000ull || !atomic_compare_exchange_strong(&g_wp_log_ns, &last, now)) return;
+    static uint64_t pf, pp, pl;
+    uint64_t f = atomic_load(&g_wp_faults), pr = atomic_load(&g_wp_protects), l = atomic_load(&g_wp_looks);
+    if (last) {
+        double s = (now - last) / 1e9;
+        fprintf(stderr, "[ps5] write watch: %.0f writes caught/s, %.0f pages protected/s, %.0f looks/s; %llu MiB read-only, "
+                        "%llu MiB left writable (written at every look)\n", (f - pf) / s, (pr - pp) / s, (l - pl) / s,
+                (unsigned long long)(atomic_load(&g_wp_clean) * WPAGE >> 20), (unsigned long long)(atomic_load(&g_wp_hot) * WPAGE >> 20));
+    }
+    pf = f, pp = pr, pl = l;
+}
+
 int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {
-    (void)addr, (void)size, (void)pages, (void)max, (void)page;
-    return -1;   // (no write watch on the console: above)
+    if (!wp_on() || !size || max <= 0 || addr < g_lo || addr + size > g_hi) return -1;
+    *page = WPAGE;
+    atomic_fetch_add_explicit(&g_wp_looks, 1, memory_order_relaxed);
+    wp_log();
+    int n = 0;
+    for (uint64_t p = addr & ~(WPAGE - 1), end = addr + size; p < end; p += WPAGE) {
+        if (!in_window(p) || !unit_backed(p)) continue;   // (not backed: nothing written there)
+        WState *w = wstate(p, true);
+        if (!w) { wp_off("no memory for the page states", p, 0); return -1; }
+        uint8_t st = atomic_load(&w->state);
+        if (st == W_CLEAN) { w->streak = 0; continue; }   // (unlocked: a write makes it written under the lock)
+        if (n == max) break;   // (the caller looks again from here)
+        pages[n++] = p;
+        if (st == W_GAME) continue;
+        wlock(w);
+        st = atomic_load(&w->state);
+        bool protect = false;
+        if (st == W_DIRTY && ++w->streak >= HOT_AFTER) {   // written at every look: left writable for a while
+            int k = w->strikes < HOT_STRIKES_MAX ? w->strikes : HOT_STRIKES_MAX;
+            w->wait = (uint8_t)(HOT_WAIT << k < HOT_WAIT_MAX ? HOT_WAIT << k : HOT_WAIT_MAX);
+            if (w->strikes < 255) w->strikes++;
+            w->streak = 0;
+            wset(w, W_HOT);
+        } else if (st == W_DIRTY || st == W_OFF) {
+            protect = true;
+        } else if (st == W_HOT && (!w->wait || !--w->wait)) {   // tried again
+            w->streak = 0;
+            protect = true;
+        }
+        int r = protect ? set_writable(p, false) : 0;
+        if (protect && !r) wset(w, W_CLEAN), atomic_fetch_add_explicit(&g_wp_protects, 1, memory_order_relaxed);
+        wunlock(w);
+        if (r) { wp_off("a protection change", p, r); return -1; }
+    }
+    return atomic_load(&g_wp) > 0 ? n : -1;
+}
+
+// A write fault (crash_handler) on a page the watch protected: written, and writable again. A fault on a page that
+// is writable by now is another thread's fault having come first: the write is only tried again (the same address
+// faulting over and over on a writable page is a real fault). Async-signal-safe: atomics, the page's lock (spinning)
+// and system calls; no thread-local state (the title's TLS is emulated, which isn't safe in a signal handler).
+static bool wp_fault(uint64_t fa, bool write) {
+    if (atomic_load(&g_wp) <= 0 || !write) return false;
+    WState *w = wstate(fa, false);
+    if (!w) return false;
+    uint64_t p = fa & ~(WPAGE - 1);
+    wlock(w);
+    uint8_t st = atomic_load(&w->state);
+    int r = -1;
+    if (st == W_CLEAN) {   // written first: a look reads the state without the lock, and a write may follow the moment
+                           // the page is writable
+        wset(w, W_DIRTY);
+        if ((r = set_writable(p, true))) wset(w, W_CLEAN);
+        else atomic_fetch_add_explicit(&g_wp_faults, 1, memory_order_relaxed);
+    }
+    uint32_t prot = st == W_CLEAN ? 0 : prot_of(p);
+    wunlock(w);
+    if (st == W_CLEAN) return r == 0;
+    if (st == W_GAME || !(prot & PS5_KERNEL_PROT_CPU_WRITE)) return false;   // read-only, not by the watch: not ours
+    static _Atomic uint64_t last;
+    static _Atomic int again;
+    if (atomic_exchange(&last, fa) == fa) {
+        if (atomic_fetch_add(&again, 1) > 100000) { atomic_store(&again, 0); return false; }
+    } else {
+        atomic_store(&again, 0);
+    }
+    return true;
+}
+
+// [lo, hi) writable and written (plat_commit: before the kernel or the GPU driver writes it), and kept so for a few
+// looks (W_HOT), so that a look on another thread doesn't protect it again before the kernel's write (that would fail,
+// EFAULT, and host/fs.c tries again: rarely needed, then)
+static void wp_unprotect(uint64_t lo, uint64_t hi) {
+    if (atomic_load(&g_wp) <= 0) return;
+    for (uint64_t p = lo & ~(WPAGE - 1); p < hi; p += WPAGE) {
+        WState *w = wstate(p, false);
+        if (!w) { p = (((p >> WCHUNK_SHIFT) + 1) << WCHUNK_SHIFT) - WPAGE; continue; }   // (no chunk: nothing protected)
+        uint8_t st = atomic_load(&w->state);
+        if (st == W_GAME || st == W_OFF) continue;
+        wlock(w);
+        st = atomic_load(&w->state);
+        if (st == W_CLEAN || st == W_DIRTY || st == W_HOT) {
+            w->wait = HOT_WAIT;
+            wset(w, W_HOT);   // (before it is writable: as in wp_fault)
+            if (st == W_CLEAN) set_writable(p, true);
+        }
+        wunlock(w);
+    }
+}
+
+// The game sets the protection of [lo, hi) itself (plat_protect): left to it (writable: watched again from the next look)
+static void wp_game(uint64_t lo, uint64_t hi, bool writable) {
+    if (atomic_load(&g_wp) <= 0) return;
+    for (uint64_t p = lo & ~(WPAGE - 1); p < hi; p += WPAGE) {
+        WState *w = wstate(p, false);
+        if (!w) { p = (((p >> WCHUNK_SHIFT) + 1) << WCHUNK_SHIFT) - WPAGE; continue; }
+        wlock(w);
+        wset(w, writable ? W_OFF : W_GAME);
+        wunlock(w);
+    }
+}
+
+// Decommitted (plat_reset_guest): nothing there
+static void wp_forget(uint64_t lo, uint64_t hi) {
+    if (atomic_load(&g_wp) <= 0) return;
+    for (uint64_t p = lo & ~(WPAGE - 1); p < hi; p += WPAGE) {
+        WState *w = wstate(p, false);
+        if (!w) { p = (((p >> WCHUNK_SHIFT) + 1) << WCHUNK_SHIFT) - WPAGE; continue; }
+        wlock(w);
+        wset(w, W_OFF);
+        w->streak = w->wait = w->strikes = 0;
+        wunlock(w);
+    }
 }
 
 void plat_watch_freeze_stats(uint64_t *frozen_mib, uint64_t *thaws, uint64_t *skipped_mib) {
@@ -149,6 +398,7 @@ int plat_protect(uint64_t addr, uint64_t size, int prot) {
     int p = prot == PLAT_PROT_NONE ? 0 : prot == PLAT_PROT_READ ? PS5_SHM_READ : PS5_SHM_READ | PS5_SHM_WRITE;
     if (in_window(addr)) {   // backed first (whole units read/write), then the pages' protection
         plat_commit(addr, size);
+        wp_game(addr, addr + size, prot == PLAT_PROT_RW);
         return ps5_vrange_commit((void *)(uintptr_t)addr, size, p) ? -1 : 0;
     }
     return mprotect((void *)(uintptr_t)addr, size,
@@ -402,6 +652,7 @@ static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     if (sig == SIGABRT && depth++ > 0) { signal(SIGABRT, SIG_DFL); abort(); }
     uint64_t fa = (uint64_t)(uintptr_t)si->si_addr;
     if ((sig == SIGSEGV || sig == SIGBUS) && lazy_commit(fa)) return;
+    if ((sig == SIGSEGV || sig == SIGBUS) && wp_fault(fa, uc->uc_mcontext.mc_err & 2)) return;   // (x86 PF_W: a write)
     uint64_t pc = (uint64_t)uc->uc_mcontext.mc_rip, sp = (uint64_t)uc->uc_mcontext.mc_rsp, lr = 0;
     if (sig != SIGSEGV || (fa & ~0xFFFull) != (sp & ~0xFFFull)) lr = *(uint64_t *)(uintptr_t)sp;
     if (rt_fault_watch(fa, pc)) return;
