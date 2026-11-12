@@ -23,14 +23,16 @@ __attribute__((noreturn)) static void no_game(const char *where) {
     fprintf(stderr, "%s (%s)\n", NO_GAME, where);
     // (on the TV: the SDL subset shows a message box as the console's notification)
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "TSword", "No game code yet: milestone 4's PS5 export brings it "
-                             "from your PC. The runtime started; totk.log in the title folder says how far.", NULL);
+                             "from your PC. The runtime started: logs/totk.log in the title folder says how far.", NULL);
     SDL_Delay(4000);
     rt_fatal("%s", NO_GAME);
 }
 
 // modules.c's
-const RtLayoutEntry rt_layout[1];
-const int rt_layout_count = 0;
+// (the main module's place, which every version shares, and a size inside the window up to the kernel region at
+// 0x7010000000: mem_init reserves the module window from it before anything needs the game)
+const RtLayoutEntry rt_layout[1] = {{"main", 0x7000000000ull, 0x8000000ull}};
+const int rt_layout_count = 1;
 const RtFileHash rt_exefs_sha256[1];
 const int rt_exefs_sha256_count = 0;
 const char rt_default_exefs[] = "", rt_default_romfs[] = "", rt_default_profile[] = "";

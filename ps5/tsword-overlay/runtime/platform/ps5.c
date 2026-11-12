@@ -43,6 +43,17 @@ int pthread_timedjoin_np(pthread_t, void **, const struct timespec *);
 
 extern char **environ;
 
+// ---- (the console) What the runtime says before its log opens - mem_init's reservations, a fatal error that ends it
+// before log_open - goes to the kernel log only, which a player can't read: stderr into tsword-start.log in the title
+// folder too, from the start (the runtime's own log, totk.log, takes over once open).
+__attribute__((constructor)) static void start_log(void) {
+    FILE *f = freopen("/app0/tsword-start.log", "w", stderr);
+    if (f) {
+        setvbuf(stderr, NULL, _IONBF, 0);
+        fprintf(stderr, "TSword PS5: the runtime's start (its log, totk.log, follows once open)\n");
+    }
+}
+
 // ---- threads
 
 struct PlatThread {
