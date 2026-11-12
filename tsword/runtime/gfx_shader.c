@@ -302,6 +302,11 @@ static void init_paths(void *param) {
     if (xlate_cfg && *xlate_cfg && strlen(xlate_cfg) < sizeof xlate_exe) strcpy(xlate_exe, xlate_cfg);
     else if (exe_dir[0] && file_exists(beside)) strcpy(xlate_exe, beside);
     else if (root[0]) snprintf(xlate_exe, sizeof xlate_exe, "%s/build/xlate/totk_xlate" PLAT_EXE_SUFFIX, root);
+#ifdef __PROSPERO__
+    // (TSword PS5) no translator runs on the console: its identity, totk_xlate.id, comes beside the eboot with the
+    // shader cache the PC's PS5 export translated (installer/steps.py Ps5Export), so the keys are the PC's
+    else if (exe_dir[0]) snprintf(xlate_exe, sizeof xlate_exe, "%s/totk_xlate", exe_dir);
+#endif
     if (cache_cfg && *cache_cfg && strlen(cache_cfg) < sizeof cache_dir) strcpy(cache_dir, cache_cfg);
     else if (exe_dir[0]) snprintf(cache_dir, sizeof cache_dir, "%s/shader-cache", exe_dir);
     xlate_identity();
@@ -318,6 +323,44 @@ static void paths(void) { plat_once(&paths_once, init_paths, NULL); }
 void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgroup[3], uint32_t gather_bits, int zero_locals) {
     paths();
     if (host_set++) return;
+    // (TSword) The PS5's answers: they are in every cache key and in the translation, so the PC's PS5 export
+    // (installer/steps.py Ps5Export: totk.exe --prepare-shaders with TSWORD_PS5_HOST) translates with the console's
+    // GPU's, not the PC's: "f64,sbuf,sg_vs,sg_fs,sg_cs,gather,zero_locals" - RADV on the PS5's GPU (gfx10.3):
+    // shaderFloat64, a 4-byte storage alignment, a subgroup of 64 with fragment and compute pinned to 32
+    // (subgroupSizeControl, TOTK_VK_SUBGROUP_PIN), 8 sub-texel bits, Mesa's zeroed locals. The console logs its own
+    // and compares them with tsword-shader-host.txt, which the export writes beside the shaders.
+    uint32_t sg_told[3] = {subgroup[0], subgroup[1], subgroup[2]};
+#ifndef __PROSPERO__
+    const char *ps5 = getenv("TSWORD_PS5_HOST");
+    unsigned v[7];
+    if (ps5 && sscanf(ps5, "%u,%u,%u,%u,%u,%u,%u", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) == 7) {
+        float64 = (int)v[0], sbuf_align = v[1], sg_told[0] = v[2], sg_told[1] = v[3], sg_told[2] = v[4];
+        gather_bits = v[5], zero_locals = (int)v[6];
+        rt_log("gfx_shader: TSWORD_PS5_HOST: translating with the PS5's answers (%s)", ps5);
+    }
+#endif
+    subgroup = sg_told;
+    {
+        char mine[96];
+        snprintf(mine, sizeof mine, "%d,%u,%u,%u,%u,%u,%d", float64, sbuf_align, subgroup[0], subgroup[1], subgroup[2],
+                 gather_bits, zero_locals != 0);
+        rt_log("gfx_shader: host answers %s", mine);
+#ifdef __PROSPERO__
+        char want[PATH_CAP + 64], *exe_dir_end = strrchr(cache_dir, '/');
+        if (exe_dir_end) {
+            snprintf(want, sizeof want, "%.*s/tsword-shader-host.txt", (int)(exe_dir_end - cache_dir), cache_dir);
+            uint64_t size = 0;
+            char *f = (char *)read_file(want, &size);
+            if (f) {
+                while (size && (f[size - 1] == '\n' || f[size - 1] == '\r' || f[size - 1] == ' ')) size--;
+                if (size != strlen(mine) || memcmp(f, mine, size))
+                    rt_log("gfx_shader: the shader cache was translated for answers %.*s, this console gives %s: its "
+                           "shaders will miss (tell TSword's maintainer)", (int)size, f, mine);
+                free(f);
+            }
+        }
+#endif
+    }
     host_f64 = float64, host_sbuf = sbuf_align, host_gather = gather_bits, host_zero_locals = zero_locals;
     memcpy(host_sg, subgroup, sizeof host_sg);
     if (float64 && !sbuf_align && subgroup[0] == 32 && subgroup[1] == 32 && subgroup[2] == 32 && !gather_bits && !zero_locals) return;
@@ -1350,6 +1393,26 @@ static int in_load(const uint8_t iid[32], Inputs *in) {
 
 // ---- translation
 
+#ifdef __PROSPERO__
+// (TSword PS5) the cache keys missed once: 1 when key was missed before (and is remembered now)
+static int ps5_miss_seen(const uint8_t key[32]) {
+    enum { N = 1 << 14 };
+    static uint64_t seen[N];
+    static PlatMutex lock = PLAT_MUTEX_INIT;
+    uint64_t k;
+    memcpy(&k, key, 8);
+    k |= 1;
+    int found = 0;
+    plat_mutex_lock(&lock);
+    for (uint32_t i = (uint32_t)(k >> 1) & (N - 1), probes = 0; probes < N; i = (i + 1) & (N - 1), probes++) {
+        if (seen[i] == k) { found = 1; break; }
+        if (!seen[i]) { seen[i] = k; break; }
+    }
+    plat_mutex_unlock(&lock);
+    return found;
+}
+#endif
+
 static const GfxShader *translate_one(const Req *r, int stage, const uint8_t *control, const uint8_t *code,
                                       const GfxShaderAnswers *a) {
     const uint8_t *key = r->key;
@@ -1362,6 +1425,19 @@ static const GfxShader *translate_one(const Req *r, int stage, const uint8_t *co
     if (look && (s = mem_find(look))) return plat_inc64(&n_hits), s;
     if (look && (s = disk_load(look, look_iid))) return plat_inc64(&n_hits), mem_insert(s);
 
+#ifdef __PROSPERO__
+    // (TSword PS5) No translator on the console: a shader the PC's PS5 export did not translate is missed. Its inputs
+    // go to shader-cache/in/ (once), so copying that folder back to the PC's PS5 folder lets the next export translate
+    // it too (gfx_shader_prewarm translates every stored input).
+    if (ps5_miss_seen(key)) return NULL;
+    in_store(r->iid, stage, control, code, r, a);
+    {
+        char miss[65];
+        key_hex(key, miss);
+        return fail("not in the PS5 export's shader cache (its inputs are kept in shader-cache/in for the next export)",
+                    miss);
+    }
+#endif
     uint64_t skip = stage == GFX_STAGE_CS ? 0 : CODE_SKIP;
     char hex[65], code_path[PATH_CAP + 80], spv_path[PATH_CAP + 80], res_path[PATH_CAP + 80];
     key_hex(key, hex);

@@ -20,8 +20,14 @@ static void (*g_handlers[32])(void);
 static atomic_int g_count;
 static atomic_flag g_closing = ATOMIC_FLAG_INIT;
 
+bool tsword_gamecode_load(void);
+const char *tsword_gamecode_why(void);
+
 int __wrap_main(int argc, char **argv, char **envp) {
     atomic_store(&g_in_main, true);
+    // the game code first (gamecode.c): the runtime's main reads its layout before anything else. Without it the
+    // runtime still starts and stops where it needs the game, with the reason on the TV.
+    if (!tsword_gamecode_load()) fprintf(stderr, "[tsword] %s\n", tsword_gamecode_why());
     return __real_main(argc, argv, envp);
 }
 

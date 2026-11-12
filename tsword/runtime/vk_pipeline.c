@@ -3110,7 +3110,10 @@ int vk_pipeline_prepare_shaders(void) {
     const char *pe = cfg_get("TOTK_PREWARM_XLATE");   // no fixed default: half the CPUs, at most 16, when unset
     int procs = pe && *pe ? atoi(pe) : cpus / 2 > 16 ? 16 : cpus / 2;
     int rc = gfx_shader_prepare_seed(dir, cpus, procs < 1 ? 1 : procs);
-    if (!rc) lb_warm_prepared(dir);
+    // (TSword) the PS5 export's translation (TSWORD_PS5_HOST) builds nothing into this PC's driver cache: the
+    // shaders are the console's
+    const char *ps5 = getenv("TSWORD_PS5_HOST");
+    if (!rc && !(ps5 && *ps5)) lb_warm_prepared(dir);
     return rc;
 }
 

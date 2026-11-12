@@ -43,8 +43,9 @@ def main():
     ap.add_argument("--sdk", required=True)
     ap.add_argument("--deps", required=True)
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "tsword"))
+    ap.add_argument("--dry-run", required=True, help="tools/build_ps5.py --dry-run's directory (need.txt)")
     a = ap.parse_args()
-    sdk, deps, out = (os.path.abspath(x) for x in (a.sdk, a.deps, a.out))
+    sdk, deps, out, dry = (os.path.abspath(x) for x in (a.sdk, a.deps, a.out, a.dry_run))
     os.makedirs(out, exist_ok=True)
     if not os.path.exists(os.path.join(R, "platform", "ps5.c")):
         sys.exit("tsword/ has no runtime/platform/ps5.c: run tools/sync-tsword.sh")
@@ -85,8 +86,14 @@ def main():
     # CPU model, the process end and working directory (WSword PS5's), and the Vulkan commands (vkgen.py)
     ps5t = os.path.join(ROOT, "ps5", "tsword")
     pv = f"{version} (TSword PS5)"
-    side = {"sdl/sdl_ps5.c": "", "ps5_glue.c": "", "ps5_cwd.c": "", "cpu_model.c": "",
-            "gamecode.c": f"-DTSWORD_PORT_VERSION='\"{pv}\"' {cflags}"}
+    # what the PS5 export's game code must say it was built for (tsword/tools/build_ps5.py: the runtime headers and
+    # the install side, which the export compiles against)
+    sys.path.insert(0, os.path.join(T, "tools"))
+    import build_ps5
+    gid = build_ps5.gamecode_id(R)
+    side = {"sdl/sdl_ps5.c": "", "ps5_glue.c": "", "ps5_cwd.c": "", "cpu_model.c": "", "elfload.c": "",
+            "gamecode.c": f"-DTSWORD_PORT_VERSION='\"{pv}\"' -DTSWORD_GAMECODE_ID='\"{gid}\"' -std=gnu17 -O2 -g "
+                          f"-march=znver2 -fno-omit-frame-pointer -Wall -I{deps}/include"}
     for s_, extra in side.items():
         o = f"{out}/obj/ps5/{os.path.splitext(s_)[0]}.o"
         objs.append(o)
@@ -96,11 +103,17 @@ def main():
     n.append(f"build {vkc}: vkgen {deps}/include/vulkan/vulkan_core.h | {ps5t}/vkgen.py\n")
     objs.append(f"{out}/obj/ps5/vk_dispatch.o")
     n.append(f"build {out}/obj/ps5/vk_dispatch.o: cc {vkc}\n  flags = -std=gnu17 -O2 -g -march=znver2 -w -I{deps}/include\n")
+    # what the game code may import, by name (exports.py: gamecode.c's loader resolves the library's imports with it)
+    n.append(f"rule exports\n  command = {sys.executable} {ps5t}/exports.py --sdk {sdk} --out {out}/gen/exports.c --names {out}/exports.txt "
+             f"--need {dry}/need.txt --lib {deps}/lib/libzstd.a $in\n  description = exports\n")
+    n.append(f"build {out}/gen/exports.c | {out}/exports.txt: exports {' '.join(objs)} | {ps5t}/exports.py {dry}/need.txt\n")
+    n.append(f"build {out}/obj/ps5/exports.o: cc {out}/gen/exports.c\n  flags = -std=gnu17 -O2 -w\n")
+    objs.append(f"{out}/obj/ps5/exports.o")
     n.append(f"build {out}/libtsword.a: ar {' '.join(objs)}\n")
     n.append(f"default {out}/libtsword.a\n")
     with open(os.path.join(out, "build.ninja"), "w") as f:
         f.write("\n".join(n))
-    print(f"configure: {len(objs)} objects -> {out}/libtsword.a (TotK Recomp {version}, {commit[:12]})")
+    print(f"configure: {len(objs)} objects -> {out}/libtsword.a (TotK Recomp {version}, {commit[:12]}), game code id {gid}")
     return 0
 
 

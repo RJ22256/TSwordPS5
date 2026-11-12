@@ -19,7 +19,14 @@ ninja=$(command -v ninja || echo "$HOME/.local/bin/ninja")
 export PS5_CLANG=${PS5_CLANG:-$(command -v clang || true)}
 
 [[ -f $deps/lib/libopus.a && -f $deps/lib/libvpx.a && -f $deps/lib/libzstd.a ]] || bash "$ps5/tsword/deps.sh" "$sdk" "$deps"
-python3 "$ps5/tsword/configure.py" --sdk "$sdk" --deps "$deps" --out "$out"
+# The PS5 export's game code as the PC will build it, tried here with stand-ins (tsword/tools/build_ps5.py --dry-run):
+# what it imports goes into the title's export table, the headers it reads into the PS5 kit TSword Setup carries
+dry=$root/build/tsword-dryrun
+lld=$(command -v ld.lld || command -v ld.lld-18 || echo "$sdk/bin/ld.lld")
+python3 "$root/tsword/tools/build_ps5.py" --dry-run --sdk "$sdk" --runtime "$root/tsword/runtime" --deps "$deps" \
+    --out "$dry" --lld "$lld" > "$root/build/tsword-dryrun.log" 2>&1 || { tail -60 "$root/build/tsword-dryrun.log"; exit 1; }
+grep '^dry run' "$root/build/tsword-dryrun.log"
+python3 "$ps5/tsword/configure.py" --sdk "$sdk" --deps "$deps" --out "$out" --dry-run "$dry"
 "$ninja" -C "$out"
 
 mkdir -p "$work"
@@ -71,6 +78,15 @@ cp "$t/LICENSE" "$app/TotK-Recomp-LICENSE.txt"
 cp "$t/THIRD_PARTY_NOTICES.md" "$app/TotK-Recomp-THIRD_PARTY_NOTICES.md"
 cp "$t/totk.ini.example" "$app/totk.ini.example"
 rm -rf "$app/assets" "$app/shaders"  # (the template's samples' assets, not TSword's)
+# The PS5 kit TSword Setup (the PC release) builds the console's game code with: the headers, what this eboot
+# exports and the game code id it expects (dist/TSword-PS5-kit)
+kit=$root/dist/TSword-PS5-kit
+rm -rf "$kit"
+mkdir -p "$kit"
+cp -R "$dry/include" "$kit/include"
+cp "$out/exports.txt" "$kit/exports.txt"
+cp "$dry/gamecode.id" "$kit/gamecode.id"
+echo "==> the PS5 kit for TSword Setup: $kit (game code id $(cat "$kit/gamecode.id"), $(wc -l < "$kit/exports.txt") exports)"
 echo "==> TSword (TotK Recomp $(cat "$t/VERSION")) for the PS5: $app"
 # The eboot's symbols beside it (TSword.sym), for the console's crash reports
 elf=$work/link/llvm-pie.elf

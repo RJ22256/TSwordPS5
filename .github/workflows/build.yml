@@ -132,8 +132,9 @@ jobs:
         working-directory: TSwordPS5
         run: |
           ver=$(python3 -c 'import json; print(json.load(open("ps5/sce_sys/param.json"))["contentVersion"])')
-          cd dist && zip -qr "../TSwordPS5-PPSA99778.zip" PPSA99778 && cd ..
+          cd dist && zip -qr "../TSwordPS5-PPSA99778.zip" PPSA99778 && zip -qr ../TSword-PS5-kit.zip TSword-PS5-kit && cd ..
           sha256sum TSwordPS5-PPSA99778.zip > TSwordPS5-PPSA99778.zip.sha256
+          # (the PS5 kit: what TSword Setup - the PC release, pc.yml - builds the console's game code with)
           echo "::notice title=Zip::$(du -m TSwordPS5-PPSA99778.zip | cut -f1) MB"
       - uses: actions/upload-artifact@v4
         continue-on-error: true  # (the account's artifact storage can be full: the release doesn't need it)
@@ -150,5 +151,5 @@ jobs:
           NOTES: ${{ inputs.release_notes }}
         run: |
           if [[ -n "$NOTES" && -f "$NOTES" ]]; then n=(--notes-file "$NOTES"); else n=(--notes "TSword PS5 $TAG"); fi
-          gh release create "$TAG" TSwordPS5-PPSA99778.zip TSwordPS5-PPSA99778.zip.sha256 --target "$GITHUB_SHA" \
+          gh release create "$TAG" TSwordPS5-PPSA99778.zip TSwordPS5-PPSA99778.zip.sha256 TSword-PS5-kit.zip --target "$GITHUB_SHA" \
             --title "TSword PS5 $TAG" --prerelease "${n[@]}"

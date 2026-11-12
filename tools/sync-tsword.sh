@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tools/sync-tsword.sh [<totk-pc-recomp checkout>] [<commit>] - tsword/ from TotK Recomp (valentderah/totk-pc-recomp,
-# MIT): its runtime/, recomp/ (the lifter the PS5 export runs on the PC) and the tools the export uses, at the pinned
-# commit (tsword/SOURCE), with TSword's own changes kept in ps5/tsword-patches/*.patch and applied on top.
+# MIT): the whole tree at the pinned commit (tsword/SOURCE) but its GitHub files - the runtime the PS5 title builds,
+# and everything TSword Setup (the PC release, .github/workflows/pc.yml) is made of - with TSword's own changes kept
+# in ps5/tsword-patches/*.patch and applied on top, and ps5/tsword-overlay/ copied over it.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 src=${1:-}
@@ -14,9 +15,8 @@ fi
 [[ -n $rev ]] || rev=$(git -C "$src" rev-parse HEAD)
 rm -rf "$root/tsword"
 mkdir -p "$root/tsword"
-git -C "$src" archive "$rev" runtime recomp LICENSE THIRD_PARTY_NOTICES.md VERSION totk.ini.example \
-    tools/build_game.py tools/prepare_shaders.py tools/pack_shader_cache.py tools/make_romfs_patches.py \
-    tools/romfs_index.py tools/requirements.txt 2>/dev/null | tar -x -C "$root/tsword"
+git -C "$src" archive "$rev" | tar -x -C "$root/tsword"
+rm -rf "$root/tsword/.github" "$root/tsword/.githooks"
 for p in "$root"/ps5/tsword-patches/*.patch; do
     [[ -f $p ]] || continue
     git -C "$root" apply --directory=tsword "$p"
