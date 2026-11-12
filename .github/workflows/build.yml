@@ -115,6 +115,8 @@ jobs:
       - name: TSword runtime dependencies (opus, libvpx, zstd, headers)
         working-directory: TSwordPS5
         run: |
+          command -v nasm || sudo apt-get install -y -qq nasm   # (libvpx's assembly)
+          nasm -v
           sdk=$(bash ps5/tools/setup-sdk.sh)
           bash ps5/tsword/deps.sh "$sdk" build/tsword-deps
       - name: The TotK runtime cross-built (milestone 2, libtsword.a)
