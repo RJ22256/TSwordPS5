@@ -4,7 +4,8 @@
 #   SDL3 3.4.16          headers only: the title implements the subset the runtime calls (WSword PS5's sdl_ps5.c)
 #   Vulkan-Headers       1.4.350.1; the console's driver is RADV (PS5_Vulkan)
 #   VMA 3.4.0            vk_mem_alloc.h, the version and hash tools/build_game.py pins (VMA_FETCH)
-#   opus 1.5.2           static: the game's voice and music
+#   opus 1.5.2           static: the game's voice and music (no stack protector: its __stack_chk_guard is a data
+#                        import from libkernel that WSword never had - TSword v0.2.1 closed at launch with it)
 #   libvpx 1.15.2        static, the VP9 decoder only: the game's movies (runtime/ov_movie.c)
 #   zstd 1.5.7           static: RomFS files and the patch sets (runtime/ov_zstd.c, resolution.c)
 # Each part is skipped when its output exists (delete the prefix to redo).
@@ -50,7 +51,8 @@ if [[ ! -f $P/lib/libopus.a ]]; then
         65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1 opus-1.5.2.tar.gz
     unpack opus-1.5.2.tar.gz opus
     cmake -S "$W/opus" -B "$W/opus/build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TC" -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_FLAGS="-march=znver2" -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_SHARED_LIBS=OFF -DOPUS_BUILD_TESTING=OFF \
+        -DCMAKE_C_FLAGS="-march=znver2 -fno-stack-protector" -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_SHARED_LIBS=OFF -DOPUS_BUILD_TESTING=OFF \
+        -DOPUS_STACK_PROTECTOR=OFF -DOPUS_FORTIFY_SOURCE=OFF \
         -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF -DOPUS_INSTALL_CMAKE_CONFIG_MODULE=OFF \
         > "$W/opus.configure.log" 2>&1 || { tail -40 "$W/opus.configure.log"; exit 1; }
     cmake --build "$W/opus/build" -j"$JOBS" > "$W/opus.build.log" 2>&1 || { grep -E "error|FAILED" "$W/opus.build.log" | head -30; exit 1; }

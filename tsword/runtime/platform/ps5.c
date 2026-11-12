@@ -38,7 +38,6 @@
 // the console's own: thread affinity, the random number service, the timed join its libkernel has
 int scePthreadGetaffinity(pthread_t, uint64_t *);
 int scePthreadSetaffinity(pthread_t, uint64_t);
-int sceRandomGetRandomNumber(void *buf, size_t n);
 int pthread_timedjoin_np(pthread_t, void **, const struct timespec *);
 
 extern char **environ;
@@ -1297,11 +1296,17 @@ int plat_run_self(const char *env_name, const char *env_value, char *out, size_t
     return -1;
 }
 
-int plat_random(void *out, size_t n) {   // (the console's random number service: at most 64 bytes a call)
+// (the console) The CPU's own random numbers (RDRAND: Zen 2 has it), not a system module - libSceRandom, the one
+// module WSword's title didn't import, is a suspect for v0.2.1 closing at launch
+int plat_random(void *out, size_t n) {
     uint8_t *p = out;
     while (n) {
-        size_t k = n < 64 ? n : 64;
-        if (sceRandomGetRandomNumber(p, k) < 0) return 0;
+        unsigned long long v = 0;
+        unsigned char ok = 0;
+        for (int tries = 0; tries < 10 && !ok; tries++) __asm__ volatile("rdrand %0; setc %1" : "=r"(v), "=qm"(ok) :: "cc");
+        if (!ok) return 0;
+        size_t k = n < 8 ? n : 8;
+        memcpy(p, &v, k);
         p += k, n -= k;
     }
     return 1;
