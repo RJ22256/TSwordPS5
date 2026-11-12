@@ -1107,11 +1107,24 @@ static int fs_err(int e) {
 
 int plat_fs_kind(const char *path) {
     struct stat st;
-    if (lstat(path, &st)) return PLAT_FS_MISSING;
+    if (lstat(path, &st) && stat(path, &st)) return PLAT_FS_MISSING;   // (stat too: lstat may be refused where stat isn't)
     return S_ISLNK(st.st_mode) ? PLAT_FS_LINK : S_ISDIR(st.st_mode) ? PLAT_FS_DIR : PLAT_FS_FILE;
 }
 
-int plat_fs_mkdir(const char *path) { return mkdir(path, 0755) ? fs_err(errno) : PLAT_FS_OK; }
+// A directory that is already there: the console's file systems answer mkdir on one with other errors than EEXIST
+// (the title folder, /app0: v0.3.8 stopped at "cannot create directory /app0/profile" with the directory in place), so
+// what is there decides.
+int plat_fs_mkdir(const char *path) {
+    if (!mkdir(path, 0755)) return PLAT_FS_OK;
+    int e = errno;
+    struct stat st;
+    int there = !stat(path, &st);
+    if (there && S_ISDIR(st.st_mode)) return PLAT_FS_EXISTS;
+    if (e != ENOENT)   // (rare, and the fatal that follows names only the path)
+        fprintf(stderr, "[ps5] mkdir %s: errno %d; %s (mode %#o)\n", path, e, there ? "something is there" : "nothing there",
+                there ? (unsigned)st.st_mode : 0u);
+    return fs_err(e);
+}
 
 int plat_fs_rmdir(const char *path) {
     struct stat st;
