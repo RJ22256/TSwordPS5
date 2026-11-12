@@ -1,32 +1,38 @@
 diff --git a/runtime/vk_texture.c b/runtime/vk_texture.c
-index 68b5a9b..2dbe3d1 100644
+index 68b5a9b..4921383 100644
 --- a/runtime/vk_texture.c
 +++ b/runtime/vk_texture.c
-@@ -68,6 +68,8 @@ typedef struct Tex {
+@@ -68,6 +68,11 @@ typedef struct Tex {
      uint64_t use_seq;             // order of the last creation or take-back among all entries
      uint64_t rel_seq;             // while released: use_seq of the newest entry placed before this release; an entry
                                    // with a later use_seq on overlapping storage replaced this one's bytes
-+    uint64_t chash;               // untracked storage: the content hash of the storage at the last upload or check
++    uint64_t chash;               // untracked storage: the full content hash of the storage at the last upload or check
++    uint64_t shash;               // and its sampled hash, taken with it
++    uint64_t hchk_frame, hfull_frame;   // the frame of the last content check and of the last full hash
 +    uint8_t chash_ok;             // chash holds one
++    uint8_t dynamic;              // its content changed after its first upload: hashed in full at every check
  } Tex;
  
  // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
-@@ -1245,12 +1247,58 @@ static int storage_rewritten(const Tex *e, uint32_t since, uint32_t *now) {
+@@ -1245,12 +1250,90 @@ static int storage_rewritten(const Tex *e, uint32_t since, uint32_t *now) {
      return 0;
  }
  
 +// Storage the platform does not write-watch (the PS5: plat_mem_written answers untracked) has no page generations, so
 +// "not tracked" used to mean "upload again" at every check: every ASTC texture a frame bound was decoded again each
-+// submission (the title screen at 0.1 fps, 8 s of ASTC decodes a frame). There the storage's own bytes decide: a hash of
-+// all of them, taken before an upload reads them and again at each check (once a submission at most: e->checked), and
-+// a different hash uploads again. A write between the hash and the upload's read only costs one more upload later.
-+static uint64_t storage_hash(const Tex *e) {
-+    const uint8_t *p = (const uint8_t *)(uintptr_t)e->pub.addr;
-+    uint64_t n = e->t.L.size, a = 0x9e3779b97f4a7c15ull ^ n, b = 0xc2b2ae3d27d4eb4full, c = 0x165667b19e3779f9ull,
++// submission (the title screen at 0.1 fps, 8 s of ASTC decodes a frame). There the storage's own bytes decide, as in
++// WSword's texture cache on the console (SheikahSlate pc/runtime/nvn/vulkan/textures.c upload_texture, which BotW
++// runs with on the PS5): a full hash before the first upload; then a check once a frame at most, every 8th frame for
++// a texture whose content never changed (staggered by the entry's address), which reads 8 bytes at 2,048 places and
++// hashes in full only when that sample differs, or after 120 frames within 4 MiB of full hashes a frame; a texture
++// whose content did change (dynamic) is hashed in full at every check. A different full hash uploads again.
++// TOTK_TEX_FULLHASH=1 hashes every texture in full at every check (no sample, no stagger).
++static uint64_t storage_hash(const uint8_t *p, uint64_t n) {   // four independent lanes: the multiplies overlap
++    uint64_t a = 0x9e3779b97f4a7c15ull ^ n, b = 0xc2b2ae3d27d4eb4full, c = 0x165667b19e3779f9ull,
 +             d = 0x27d4eb2f165667c5ull;
 +    const uint64_t K = 0xff51afd7ed558ccdull;
 +#define TEX_MIX(h, w) (h = (h ^ (w)) * K, h = (h << 31) | (h >> 33))
-+    for (; n >= 32; p += 32, n -= 32) {   // four independent lanes: the multiplies overlap
++    for (; n >= 32; p += 32, n -= 32) {
 +        uint64_t w[4];
 +        memcpy(w, p, 32);
 +        TEX_MIX(a, w[0]), TEX_MIX(b, w[1]), TEX_MIX(c, w[2]), TEX_MIX(d, w[3]);
@@ -47,14 +53,43 @@ index 68b5a9b..2dbe3d1 100644
 +    return h;
 +}
 +
-+// ch from the write watch; -1 (untracked): whether the storage's bytes differ from the last hash, which is updated.
++static uint64_t storage_sample(const uint8_t *p, uint64_t n) {   // 8 bytes at each of up to 2,048 places
++    uint64_t h = 1469598103934665603ull, words = n / 8, step = words > 2048 ? words / 2048 : 1;
++    for (uint64_t i = 0; i < words; i += step) {
++        uint64_t w;
++        memcpy(&w, p + i * 8, 8);
++        h = (h ^ w) * 1099511628211ull, h ^= h >> 29;
++    }
++    for (uint64_t i = words * 8; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
++    return h ^ n;
++}
++
++static uint64_t hash_budget, hash_budget_frame;   // (replay thread) bytes of scheduled full hashes left this frame
++
++// ch from the write watch; -1 (untracked): whether the storage's bytes changed since the last hash (see above).
 +static int content_check(Tex *e, int ch) {
 +    if (ch >= 0) {
 +        e->chash_ok = 0;   // (tracked: the hash would be stale if the watch ever stops answering)
 +        return ch;
 +    }
-+    uint64_t h = storage_hash(e);
-+    int changed = !e->chash_ok || h != e->chash;
++    static int always_full = -1;
++    if (always_full < 0) always_full = !strcmp(cfg_value("TOTK_TEX_FULLHASH"), "1");
++    uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), n = e->t.L.size;
++    const uint8_t *mem = (const uint8_t *)(uintptr_t)e->pub.addr;
++    int first = !e->chash_ok;
++    if (!first && !always_full) {
++        if (e->hchk_frame == frame) return 0;
++        if (!e->dynamic && ((frame + ((uintptr_t)e >> 6)) & 7)) return 0;
++    }
++    e->hchk_frame = frame;
++    if (hash_budget_frame != frame) hash_budget_frame = frame, hash_budget = 4u << 20;
++    int full = first || always_full || e->dynamic;
++    if (!full && frame - e->hfull_frame >= 120 && hash_budget >= n) full = 1, hash_budget -= n;
++    if (!full && storage_sample(mem, n) == e->shash) return 0;
++    uint64_t h = storage_hash(mem, n);
++    e->hfull_frame = frame, e->shash = storage_sample(mem, n);
++    int changed = first || h != e->chash;
++    if (!first && changed) e->dynamic = 1;
 +    e->chash = h, e->chash_ok = 1;
 +    return changed;
 +}
@@ -71,7 +106,7 @@ index 68b5a9b..2dbe3d1 100644
          upload(e);
          return;
      }
-@@ -1258,7 +1306,7 @@ static void make_fresh(Tex *e) {
+@@ -1258,7 +1341,7 @@ static void make_fresh(Tex *e) {
      int ch = vk_mem_changed(e->pub.addr, size, e->wgen, &now);
      e->wgen = now;
      e->last_ch = ch;
@@ -80,7 +115,7 @@ index 68b5a9b..2dbe3d1 100644
  }
  
  // make_fresh for draw bindings: the page check answers from this submission's write-watch snapshot (vk_memory.c
-@@ -1270,9 +1318,14 @@ static void make_fresh_snap(Tex *e) {
+@@ -1270,9 +1353,14 @@ static void make_fresh_snap(Tex *e) {
      n_checks++;
      int ch = vk_mem_changed_snap(e->pub.addr, e->t.L.size, e->uploaded ? e->wgen : 0, submit_epoch, &now);
      e->wgen = now;
