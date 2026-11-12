@@ -33,6 +33,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <ps5platform/kernel.h>
 #include <ps5platform/shm.h>
 
 #include "platform.h"
@@ -935,7 +936,21 @@ void plat_reexec(void) {
 }
 
 // (the console) A copy that a fault ends: the fault handler jumps back here (read_guard).
+// (the console) Executable pages may not be read: the console ends the title at once (SYSTEM_XO_VIOLATION, no signal
+// to catch), and the title's own code is execute-only. So a page is read only when the kernel says it is mapped
+// readable and not executable (the crash report then leaves out the code bytes at rip, and any window into code).
+static int page_readable(uint64_t a) {
+    void *start = NULL, *end = NULL;
+    uint32_t prot = 0;
+    if (sceKernelQueryMemoryProtection((void *)(uintptr_t)a, &start, &end, &prot) != 0) return 0;
+    if ((uint64_t)(uintptr_t)start > a || (uint64_t)(uintptr_t)end <= a) return 0;
+    return (prot & PS5_KERNEL_PROT_CPU_READ) && !(prot & PS5_KERNEL_PROT_CPU_EXEC);
+}
+
 int plat_mem_read(uint64_t addr, void *out, size_t n) {
+    if (!n) return 1;
+    for (uint64_t a = addr & ~0x3FFFull; a < addr + n; a += 0x4000)
+        if (!page_readable(a)) return 0;
     fault_install();
     sigjmp_buf jb;
     if (sigsetjmp(jb, 1)) {
@@ -1129,26 +1144,20 @@ uintptr_t plat_exe_base(void) { return (uintptr_t)__ehdr_start; }
 
 // The image's end: the highest end of its loaded segments, from its own program headers in memory (the console's link
 // defines no _end)
+// (its pages are not read: the header may be execute-only - the mappings from __ehdr_start on, as the kernel has
+// them, while each starts where the last ended)
 static uintptr_t image_end(void) {
     static uintptr_t end;
     if (end) return end;
-    const unsigned char *e = (const unsigned char *)__ehdr_start;
-    uint64_t phoff;
-    uint16_t phentsize, phnum;
-    memcpy(&phoff, e + 0x20, 8);
-    memcpy(&phentsize, e + 0x36, 2);
-    memcpy(&phnum, e + 0x38, 2);
-    uintptr_t hi = (uintptr_t)e;
-    for (uint16_t i = 0; i < phnum; i++) {
-        const unsigned char *ph = e + phoff + (uint64_t)i * phentsize;
-        uint32_t type;
-        uint64_t vaddr, memsz;
-        memcpy(&type, ph, 4);
-        memcpy(&vaddr, ph + 0x10, 8);
-        memcpy(&memsz, ph + 0x28, 8);
-        if (type == 1 && (uintptr_t)e + vaddr + memsz > hi) hi = (uintptr_t)e + vaddr + memsz;   // (PT_LOAD, PIE: from 0)
+    uintptr_t at = (uintptr_t)__ehdr_start, hi = at;
+    for (int i = 0; i < 64; i++) {
+        void *s = NULL, *e = NULL;
+        uint32_t prot = 0;
+        if (sceKernelQueryMemoryProtection((void *)at, &s, &e, &prot) != 0 || (uintptr_t)s > at || (uintptr_t)e <= at)
+            break;
+        hi = (uintptr_t)e, at = hi;
     }
-    return end = hi;
+    return end = hi > (uintptr_t)__ehdr_start ? hi : (uintptr_t)__ehdr_start + 1;
 }
 
 int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base) {
