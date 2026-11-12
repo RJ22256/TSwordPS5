@@ -107,34 +107,33 @@ jobs:
         run: |
           bash ps5/tools/build.sh
           ls -la dist/PPSA99778
-      - name: TSword runtime dependencies cache
+      - name: UltraTears runtime dependencies cache
         uses: actions/cache@v4
         with:
-          path: TSwordPS5/build/tsword-deps
-          key: ps5-tsword-deps-${{ hashFiles('TSwordPS5/ps5/tsword/deps.sh') }}
-      - name: TSword runtime dependencies (opus, libvpx, zstd, headers)
+          path: TSwordPS5/build/ut-deps
+          key: ps5-ut-deps-${{ hashFiles('TSwordPS5/ps5/ut/deps.sh') }}
+      - name: UltraTears runtime dependencies (opus, libvpx, zstd, headers)
         working-directory: TSwordPS5
         run: |
           command -v nasm || sudo apt-get install -y -qq nasm   # (libvpx's assembly)
           nasm -v
           sdk=$(bash ps5/tools/setup-sdk.sh)
-          bash ps5/tsword/deps.sh "$sdk" build/tsword-deps
-      - name: TSword as the title (eboot.bin)
+          bash ps5/ut/deps.sh "$sdk" build/ut-deps
+      - name: TSword on UltraTears as the title (eboot.bin)
         working-directory: TSwordPS5
         run: |
           rm -rf dist  # (the console check above: the toolchain's check, not released)
-          bash ps5/tsword/build.sh
+          bash ps5/ut/build.sh
           sdk=$(bash ps5/tools/setup-sdk.sh)
-          python3 ps5/tsword/missing.py --sdk "$sdk" build/tsword/libtsword.a build/tsword-deps/lib/*.a \
-            | tee build/tsword/missing.txt >> "$GITHUB_STEP_SUMMARY"
-          ls -la dist/PPSA99778
-      - name: The zip
+          python3 ps5/ut/missing.py --sdk "$sdk" build/ut/libut.a build/ut-deps/lib/*.a \
+            | tee build/ut/missing.txt >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist/PPSA99778 dist/TSword-PS5-export
+      - name: The zips
         working-directory: TSwordPS5
         run: |
-          ver=$(python3 -c 'import json; print(json.load(open("ps5/sce_sys/param.json"))["contentVersion"])')
-          cd dist && zip -qr "../TSwordPS5-PPSA99778.zip" PPSA99778 && zip -qr ../TSword-PS5-kit.zip TSword-PS5-kit && cd ..
-          sha256sum TSwordPS5-PPSA99778.zip > TSwordPS5-PPSA99778.zip.sha256
-          # (the PS5 kit: what TSword Setup - the PC release, pc.yml - builds the console's game code with)
+          cd dist && zip -qr "../TSwordPS5-PPSA99778.zip" PPSA99778 && zip -qr ../TSword-PS5-export.zip TSword-PS5-export && cd ..
+          sha256sum TSwordPS5-PPSA99778.zip TSword-PS5-export.zip > TSwordPS5-PPSA99778.zip.sha256
+          # (the PS5 export: what the player runs on the PC against their UltraTears game folder for the game code)
           echo "::notice title=Zip::$(du -m TSwordPS5-PPSA99778.zip | cut -f1) MB"
       - uses: actions/upload-artifact@v4
         continue-on-error: true  # (the account's artifact storage can be full: the release doesn't need it)
@@ -151,5 +150,5 @@ jobs:
           NOTES: ${{ inputs.release_notes }}
         run: |
           if [[ -n "$NOTES" && -f "$NOTES" ]]; then n=(--notes-file "$NOTES"); else n=(--notes "TSword PS5 $TAG"); fi
-          gh release create "$TAG" TSwordPS5-PPSA99778.zip TSwordPS5-PPSA99778.zip.sha256 TSword-PS5-kit.zip --target "$GITHUB_SHA" \
+          gh release create "$TAG" TSwordPS5-PPSA99778.zip TSwordPS5-PPSA99778.zip.sha256 TSword-PS5-export.zip --target "$GITHUB_SHA" \
             --title "TSword PS5 $TAG" --prerelease "${n[@]}"
