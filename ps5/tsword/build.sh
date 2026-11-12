@@ -28,8 +28,8 @@ mkdir -p "$work"
 radv_archive=$(find "$vulkan/.deps/native/radv-release/lib" -name 'libvulkan_radeon*.a' | head -1)
 lib=$work/libtsword-linked.a
 cp "$out/libtsword.a" "$lib"
-comm -12 <("$sdk/bin/llvm-nm" --defined-only -g "$out/libtsword.a" 2>/dev/null | awk 'NF == 3 && $2 ~ /[TDBRVW]/ { print $3 }' | sort -u) \
-         <("$sdk/bin/llvm-nm" --defined-only -g "$radv_archive" 2>/dev/null | awk 'NF == 3 && $2 ~ /[TDBRVW]/ { print $3 }' | sort -u) \
+comm -12 <("$sdk/bin/llvm-nm" --defined-only -g "$out/libtsword.a" 2>/dev/null | awk 'NF == 3 && $2 ~ /^[TDBR]$/ { print $3 }' | sort -u) \
+         <("$sdk/bin/llvm-nm" --defined-only -g "$radv_archive" 2>/dev/null | awk 'NF == 3 && $2 ~ /^[TDBR]$/ { print $3 }' | sort -u) \
     | awk '{ print $1 " tsword_" $1 }' > "$work/renamed.txt"
 if [[ -s $work/renamed.txt ]]; then
     echo "build.sh: renamed in the runtime (RADV defines them too): $(cut -d' ' -f1 "$work/renamed.txt" | tr '\n' ' ')"

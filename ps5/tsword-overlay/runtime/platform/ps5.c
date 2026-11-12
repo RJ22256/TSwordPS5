@@ -1112,11 +1112,35 @@ int plat_temp_dir(char *out, size_t cap) {
 
 // (the console) The title's image: from the ELF header the linker places first (__ehdr_start) to its end (_end). Its
 // path is /app0/eboot.bin - the title folder, where the runtime keeps its log, its settings and its caches.
-extern const char __ehdr_start[], _end[];
+extern const char __ehdr_start[];
 uintptr_t plat_exe_base(void) { return (uintptr_t)__ehdr_start; }
 
+// The image's end: the highest end of its loaded segments, from its own program headers in memory (the console's link
+// defines no _end)
+static uintptr_t image_end(void) {
+    static uintptr_t end;
+    if (end) return end;
+    const unsigned char *e = (const unsigned char *)__ehdr_start;
+    uint64_t phoff;
+    uint16_t phentsize, phnum;
+    memcpy(&phoff, e + 0x20, 8);
+    memcpy(&phentsize, e + 0x36, 2);
+    memcpy(&phnum, e + 0x38, 2);
+    uintptr_t hi = (uintptr_t)e;
+    for (uint16_t i = 0; i < phnum; i++) {
+        const unsigned char *ph = e + phoff + (uint64_t)i * phentsize;
+        uint32_t type;
+        uint64_t vaddr, memsz;
+        memcpy(&type, ph, 4);
+        memcpy(&vaddr, ph + 0x10, 8);
+        memcpy(&memsz, ph + 0x28, 8);
+        if (type == 1 && (uintptr_t)e + vaddr + memsz > hi) hi = (uintptr_t)e + vaddr + memsz;   // (PT_LOAD, PIE: from 0)
+    }
+    return end = hi;
+}
+
 int plat_module_of(uintptr_t addr, char *name, size_t cap, uintptr_t *base) {
-    if (addr < (uintptr_t)__ehdr_start || addr >= (uintptr_t)_end) return 0;
+    if (addr < (uintptr_t)__ehdr_start || addr >= image_end()) return 0;
     *base = (uintptr_t)__ehdr_start;
     return snprintf(name, cap, "eboot.bin") < (int)cap;
 }
