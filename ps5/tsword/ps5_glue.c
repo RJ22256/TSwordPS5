@@ -23,8 +23,38 @@ static atomic_flag g_closing = ATOMIC_FLAG_INIT;
 bool tsword_gamecode_load(void);
 const char *tsword_gamecode_why(void);
 
+// The frame watchdog: a line in totk.log every 10 s while no new frame is presented (and one when frames come again),
+// so a picture that stays on the TV tells a slow first frame (shaders and pipelines built on the console) from one that
+// stopped. gfx_counters.frames is the runtime's count of presented frames (nvn_api.h: its GfxStats starts with it).
+#include <pthread.h>
+#include <stdint.h>
+extern struct { uint64_t frames; } gfx_counters;
+void rt_log(const char *fmt, ...);
+
+static void *frame_watchdog(void *arg) {
+    (void)arg;
+    uint64_t last = 0;
+    unsigned still = 0;
+    for (;;) {
+        sceKernelUsleep(10u * 1000000u);
+        uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+        if (!f) continue;   // (before the first frame: the boot and the prewarm log their own steps)
+        if (f == last) {
+            still += 10;
+            rt_log("[ps5] watchdog: no new frame for %u s (frame %llu still on the screen)", still, (unsigned long long)f);
+        } else {
+            if (still) rt_log("[ps5] watchdog: frames again after %u s (frame %llu)", still, (unsigned long long)f);
+            still = 0;
+        }
+        last = f;
+    }
+    return NULL;
+}
+
 int __wrap_main(int argc, char **argv, char **envp) {
     atomic_store(&g_in_main, true);
+    pthread_t wd;
+    if (!pthread_create(&wd, NULL, frame_watchdog, NULL)) pthread_detach(wd);
     // the game code first (gamecode.c): the runtime's main reads its layout before anything else. Without it the
     // runtime still starts and stops where it needs the game, with the reason on the TV.
     if (!tsword_gamecode_load()) fprintf(stderr, "[tsword] %s\n", tsword_gamecode_why());
