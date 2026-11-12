@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       ps5_release:
-        description: "The TSword PS5 release (tag) whose PS5 kit this setup carries, e.g. v0.3.0-m4"
-        required: true
+        description: "The TSword PS5 release (tag) whose PS5 kit this setup carries, e.g. v0.3.0-m4; empty: none (a test)"
+        required: false
+        default: ""
       release:
         description: "Publish TSword Setup as a release with this tag (e.g. pc-0.1.0); empty: none"
         required: false
@@ -71,6 +72,7 @@ jobs:
           cp ../ps5/tsword/include/layout.h generated/v143/layout.h
           echo '[{"name": "main", "base": "0x7000000000", "size": "0x8000000"}]' > generated/v143/layout.json
       - name: The PS5 kit of the TSword PS5 release
+        if: ${{ inputs.ps5_release != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PS5: ${{ inputs.ps5_release }}
@@ -85,11 +87,11 @@ jobs:
         env:
           TSWORD_CI_NO_GPU: "1"
         run: |
-          python tools/make_release.py --out build/release/TSword-Setup --zip ../../TSword-Setup-windows.zip \
-            --ps5-kit ../../kit/TSword-PS5-kit
+          kit=(); [[ -d ../../kit/TSword-PS5-kit ]] && kit=(--ps5-kit ../../kit/TSword-PS5-kit)
+          python tools/make_release.py --out build/release/TSword-Setup --zip ../../TSword-Setup-windows.zip "${kit[@]}"
           cd ../.. && sha256sum TSword-Setup-windows.zip > TSword-Setup-windows.zip.sha256 && ls -la TSword-Setup-windows.zip
       - name: Release
-        if: ${{ inputs.release != '' }}
+        if: ${{ inputs.release != '' && inputs.ps5_release != '' }}
         working-directory: TSwordPS5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
