@@ -26,6 +26,8 @@ typedef struct {
     const void *dynsym;     // its dynamic symbols (Elf64_Sym), for elf_symbol
     const char *dynstr;
     size_t nsyms;
+    struct { char name[32]; void *addr; size_t size; } sections[64];   // its loaded sections by name (elf_section)
+    int nsections;
 } ElfImage;
 
 // Loads path. exports: sorted by name (strcmp), n of them. false: why says what's wrong (the first imports nothing
@@ -34,6 +36,9 @@ bool elf_load(const char *path, const ElfExport *exports, size_t n, ElfExecAlloc
               size_t why_size);
 // A symbol the image defines (its dynamic symbols), or NULL.
 void *elf_symbol(const ElfImage *img, const char *name);
+// A loaded section of the image by name (its bytes as relocated; *size its length), or NULL. The linker tables a
+// library brings this way (the runtime's totk_ovr / totk_obs) are found though no symbol bounds them.
+void *elf_section(const ElfImage *img, const char *name, size_t *size);
 
 #ifdef __cplusplus
 }

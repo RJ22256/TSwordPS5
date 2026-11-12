@@ -41,7 +41,7 @@ typedef struct {
     uint64_t val;
 } Dyn;
 
-enum { PT_LOAD = 1, PT_DYNAMIC = 2, PT_TLS = 7, SHT_DYNSYM = 11 };
+enum { PT_LOAD = 1, PT_DYNAMIC = 2, PT_TLS = 7, SHT_DYNSYM = 11, SHF_ALLOC = 2 };
 enum {
     DT_NULL = 0, DT_RELA = 7, DT_RELASZ = 8, DT_RELAENT = 9, DT_INIT = 12, DT_JMPREL = 23, DT_PLTRELSZ = 2,
     DT_INIT_ARRAY = 25, DT_INIT_ARRAYSZ = 27, DT_RELACOUNT = 0x6ffffff9,
@@ -69,6 +69,16 @@ void *elf_symbol(const ElfImage *img, const char *name) {
     const Sym *s = img->dynsym;
     for (size_t i = 1; i < img->nsyms; i++)
         if (s[i].shndx && !strcmp(img->dynstr + s[i].name, name)) return img->base + s[i].value;
+    return NULL;
+}
+
+void *elf_section(const ElfImage *img, const char *name, size_t *size) {
+    for (int i = 0; i < img->nsections; i++)
+        if (!strcmp(img->sections[i].name, name)) {
+            if (size) *size = img->sections[i].size;
+            return img->sections[i].addr;
+        }
+    if (size) *size = 0;
     return NULL;
 }
 
@@ -112,13 +122,28 @@ bool elf_load(const char *path, const ElfExport *exports, size_t nexports, ElfEx
     out->base = base, out->size = span;
     // its dynamic symbols (the section headers say how many)
     const Shdr *sh = (const Shdr *)(file + eh->shoff);
-    if (eh->shoff && eh->shoff + (uint64_t)eh->shnum * sizeof(Shdr) <= (uint64_t)fsize)
-        for (int i = 0; i < eh->shnum; i++)
+    if (eh->shoff && eh->shoff + (uint64_t)eh->shnum * sizeof(Shdr) <= (uint64_t)fsize) {
+        const Shdr *names = eh->shstrndx < eh->shnum ? &sh[eh->shstrndx] : NULL;
+        for (int i = 0; i < eh->shnum; i++) {
             if (sh[i].type == SHT_DYNSYM && sh[i].link < eh->shnum) {
                 out->dynsym = base + sh[i].addr;
                 out->nsyms = sh[i].size / sizeof(Sym);
                 out->dynstr = (const char *)base + sh[sh[i].link].addr;
             }
+            // the loaded (SHF_ALLOC) sections inside the image, by name
+            if (names && (sh[i].flags & SHF_ALLOC) && sh[i].addr + sh[i].size <= span &&
+                names->offset + sh[i].name < (uint64_t)fsize && out->nsections < 64) {
+                const char *nm = (const char *)file + names->offset + sh[i].name;
+                size_t len = strnlen(nm, (size_t)((uint64_t)fsize - names->offset - sh[i].name));
+                if (len && len < sizeof out->sections[0].name) {
+                    memcpy(out->sections[out->nsections].name, nm, len + 1);
+                    out->sections[out->nsections].addr = base + sh[i].addr;
+                    out->sections[out->nsections].size = sh[i].size;
+                    out->nsections++;
+                }
+            }
+        }
+        }
     if (!out->dynsym) { fail(why, wn, "%s has no symbol table%.0llu", path, 0); goto done; }
     const Dyn *dyn = (const Dyn *)(base + dynp->vaddr);
     uint64_t rela = 0, relasz = 0, jmprel = 0, pltsz = 0, init = 0, init_array = 0, init_arraysz = 0;

@@ -193,6 +193,8 @@ static bool read_text(const char *path, char *out, size_t n) {
     return true;
 }
 
+static bool add_host_tables(const ElfImage *img);
+
 static bool copy_data(const ElfImage *img) {
     const Layout *layout = elf_symbol(img, "rt_layout");
     const int *layout_count = elf_symbol(img, "rt_layout_count");
@@ -261,10 +263,35 @@ bool tsword_gamecode_load(void) {
         *k_functions[i].slot = f;
     }
     if (!copy_data(&img)) return false;
+    if (!add_host_tables(&img)) return false;
     g_loaded = true;
     fprintf(stderr, "[tsword] game code: %s, %llu MB at %p, game %d.%d.%d, %d modules\n", GAME_LIB,
             (unsigned long long)(img.size >> 20), (void *)img.base, tsg_game_version / 100, tsg_game_version / 10 % 10,
             tsg_game_version % 10, tsg_layout_count);
+    return true;
+}
+
+// The runtime's host functions the game code library brings (the install side: romfs.c's nn::fs::MountRom,
+// QueryMountRomCacheSize and InitializeForApplication). On a PC they share the executable's totk_ovr table; here they
+// are in the library's own, which the title's __start_totk_ovr doesn't bound, so they're added by hand (before the
+// loader resolves the game's imports). Without them the game asked the console for "fsp-srv" (v0.3.4).
+typedef struct Cpu Cpu;
+typedef struct { const char *name; void (*fn)(Cpu *); } HostEntry;
+void hostfn_add_override(const char *name, void (*fn)(Cpu *));
+
+static bool add_host_tables(const ElfImage *img) {
+    size_t size = 0;
+    const HostEntry *e = elf_section(img, "totk_obs", &size);
+    if (e && size >= sizeof *e) {
+        snprintf(g_why, sizeof g_why, "%s brings host observers (%s first), which this title can't add",
+                 GAME_LIB, e->name ? e->name : "?");
+        return false;
+    }
+    e = elf_section(img, "totk_ovr", &size);
+    int n = 0;
+    for (size_t i = 0; e && i < size / sizeof *e; i++)
+        if (e[i].name && e[i].fn) hostfn_add_override(e[i].name, e[i].fn), n++;
+    fprintf(stderr, "[tsword] game code: %d host function%s of its own\n", n, n == 1 ? "" : "s");
     return true;
 }
 
