@@ -2,6 +2,8 @@
 // CLOCK_MONOTONIC, _umtx_op in place of the futex, POSIX files. Memory is direct memory in reserved ranges
 // (ps5platform/shm.h: a title's anonymous mappings are charged to its ~1 GB flexible budget), committed in 64 KiB units
 // and protected in 16 KiB pages. No child processes, no /proc or sysfs: what needs them reports nothing.
+// Only the console builds it; the PC release compiles every runtime/platform/*.c and skips it here.
+#if defined(__PROSPERO__)
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <dlfcn.h>
@@ -1556,3 +1558,4 @@ void plat_ipc_close(PlatIpc *p) { (void)p; }
 int plat_restart(void) { return 0; }
 int plat_spawn(const char *const *argv, const char *cwd) { (void)argv, (void)cwd; return 0; }
 int plat_restart_wait(uint32_t timeout_ms) { (void)timeout_ms; return 0; }
+#endif  // __PROSPERO__
