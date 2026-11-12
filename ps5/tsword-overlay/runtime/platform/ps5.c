@@ -784,8 +784,22 @@ enum { PS_FREE, PS_RESERVED, PS_NONE, PS_READ, PS_RW };   // PS_NONE.. are commi
 static uint8_t *pstate;
 static PlatMutex vm_lock = PLAT_MUTEX_INIT;
 
+static int page_readable(uint64_t a);
+
+// The state bytes are backed only for ranges plat_mem_reserve took (64 KiB of them per 256 MiB of guest space): a
+// commit, decommit or protect of host memory outside every reservation (an allocation of the runtime's own) records
+// nothing, as there is no Horizon state to keep for it - writing there faulted on the console (v0.3.2: a protect of
+// host memory at 0x40d420000 wrote the unbacked state at pstate + 0x40d420).
 static void ps_set(uint64_t addr, uint64_t n, uint8_t v) {
-    if (addr < PS_LIMIT) memset(pstate + addr / PG, v, (size_t)((n + PG - 1) / PG));
+    if (!pstate || addr >= PS_LIMIT || !n) return;
+    uint64_t a = addr / PG, e = (addr + n + PG - 1) / PG;
+    if (e > PS_LIMIT / PG) e = PS_LIMIT / PG;
+    while (a < e) {
+        uint64_t chunk = (((uint64_t)(uintptr_t)(pstate + a) | 0xFFFF) + 1) - (uint64_t)(uintptr_t)pstate;
+        uint64_t to = chunk < e ? chunk : e;
+        if (page_readable((uint64_t)(uintptr_t)(pstate + a))) memset(pstate + a, v, (size_t)(to - a));
+        a = to;
+    }
 }
 
 static int shm_prot(int prot) {
