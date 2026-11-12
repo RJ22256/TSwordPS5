@@ -1129,7 +1129,18 @@ int plat_fs_mkdir(const char *path) {
 int plat_fs_rmdir(const char *path) {
     struct stat st;
     if (!lstat(path, &st) && S_ISLNK(st.st_mode)) return unlink(path) ? fs_err(errno) : PLAT_FS_OK;
-    return rmdir(path) ? fs_err(errno) : PLAT_FS_OK;
+    if (!rmdir(path)) return PLAT_FS_OK;
+    int e = errno;
+    if (e == ENOTEMPTY) {   // what is left, for the log (the caller listed and removed what it saw)
+        DIR *d = opendir(path);
+        int n = 0;
+        for (struct dirent *x; d && (x = readdir(d)) && n < 8;)
+            if (strcmp(x->d_name, ".") && strcmp(x->d_name, ".."))
+                fprintf(stderr, "[ps5] rmdir %s: still holds %s (type %u)\n", path, x->d_name, (unsigned)x->d_type), n++;
+        if (d) closedir(d);
+    }
+    errno = e;
+    return fs_err(e);
 }
 
 // Deleting needs write access to the directory, not to the file: a read-only file goes as any other.
@@ -1174,9 +1185,20 @@ int plat_fs_list(const char *dir, int (*cb)(const char *name, int kind, uint64_t
     if (!d) return fs_err(errno);
     for (struct dirent *e; (e = readdir(d));) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        // (the console: a no-follow stat can be refused where a plain one isn't - v0.3.9's save working copy kept
+        // entries this skipped, and its delete stopped at ENOTEMPTY; then the entry's own type from readdir)
         struct stat st;
-        if (fstatat(dirfd(d), e->d_name, &st, AT_SYMLINK_NOFOLLOW)) continue;
-        int kind = S_ISLNK(st.st_mode) ? PLAT_FS_LINK : S_ISDIR(st.st_mode) ? PLAT_FS_DIR : PLAT_FS_FILE;
+        int kind;
+        if (!fstatat(dirfd(d), e->d_name, &st, AT_SYMLINK_NOFOLLOW) || !fstatat(dirfd(d), e->d_name, &st, 0))
+            kind = S_ISLNK(st.st_mode) ? PLAT_FS_LINK : S_ISDIR(st.st_mode) ? PLAT_FS_DIR : PLAT_FS_FILE;
+        else if (e->d_type == DT_DIR || e->d_type == DT_REG || e->d_type == DT_LNK) {
+            kind = e->d_type == DT_DIR ? PLAT_FS_DIR : e->d_type == DT_LNK ? PLAT_FS_LINK : PLAT_FS_FILE;
+            st.st_size = 0;
+        } else {
+            fprintf(stderr, "[ps5] list %s: %s skipped (no stat: errno %d, type %u)\n", dir, e->d_name, errno,
+                    (unsigned)e->d_type);
+            continue;
+        }
         if (!cb(e->d_name, kind, kind == PLAT_FS_FILE ? (uint64_t)st.st_size : 0, ctx)) break;
     }
     closedir(d);
