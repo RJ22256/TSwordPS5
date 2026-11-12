@@ -19,8 +19,9 @@ compiled on the player's PC from their own dump), and the **game files** (the du
   commits them page by page (as WSword's does at 0x7000000000).
 - **The GPU gets the game's memory in place** (`VK_EXT_external_memory_host`): RADV on the PS5 has it; the check
   imports guest memory to make sure.
-- **Write watch** (which pages the CPU wrote, for the uploads): Windows' `MEM_WRITE_WATCH`; on the console,
-  write-protection and its faults.
+- **Write watch** (which pages the CPU wrote, for the uploads to a discrete GPU's mirrors): Windows' `MEM_WRITE_WATCH`.
+  The console needs none: its memory is one pool, which the back end imports in place (its unified-memory mode), so
+  there is nothing to upload. (Write-protection faults work there, the check showed, should it ever be wanted.)
 - **Asynchronous preemption** suspends a game thread (Win32) or signals it (Linux): on the console a signal, if the
   check shows one handled on a busy thread, else the runtime's own safe points (`TOTK_ASYNC_PREEMPT=2`).
 - **The 2^39 limit and the alias region's 64 GB** are reservations only, not memory: the check reserves them to be sure.
