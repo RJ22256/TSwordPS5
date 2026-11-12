@@ -89,20 +89,33 @@ static struct { uint64_t lo, hi; } stacks[MAX_STACKS];
 static int nstacks;
 static PlatMutex stack_lock = PLAT_MUTEX_INIT;
 
+// Where the stacks go: above the guest's address space (2^39) and the game code (0x90_0000_0000), where the kernel
+// reserves a range at its hint, or moves it upward past what is taken, up to 1 TiB (ps5platform docs/PROBE.md). Left
+// to the default placement they filled the view area from 0x4_0000_0000 beside the guest's own block, and the 31st
+// came to the kernel's own range below 0x8_0000_0000, where its commit was refused (0x80020016, v0.3.7).
+#define STACK_AREA ((void *)0xA000000000ull)
+
 // why: the reservation's (1) or the commit's (2) result in its low bits, for the log
 static void *stack_alloc(size_t size, int *why) {
     void *b = NULL;
-    int r;
+    int r = 0;
     if (size < STACK_FIRST * 2) return NULL;
-    if ((r = ps5_vrange_reserve(size, NULL, 0x10000, &b)) != 0) {
-        *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x10000000u);
-        return NULL;
+    for (int attempt = 0; attempt < 2; attempt++) {   // the stack area, then the default placement
+        b = NULL;
+        if ((r = ps5_vrange_reserve(size, attempt ? NULL : STACK_AREA, 0x10000, &b)) != 0) {
+            *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x10000000u);
+            b = NULL;
+            continue;
+        }
+        if ((r = ps5_vrange_commit((char *)b + size - STACK_FIRST, STACK_FIRST, PS5_SHM_READ | PS5_SHM_WRITE)) != 0) {
+            ps5_vrange_release(b, size);
+            *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x20000000u);
+            b = NULL;
+            continue;
+        }
+        break;
     }
-    if ((r = ps5_vrange_commit((char *)b + size - STACK_FIRST, STACK_FIRST, PS5_SHM_READ | PS5_SHM_WRITE)) != 0) {
-        ps5_vrange_release(b, size);
-        *why = (int)(((unsigned)r & 0x0FFFFFFFu) | 0x20000000u);
-        return NULL;
-    }
+    if (!b) return NULL;
     plat_mutex_lock(&stack_lock);
     if (nstacks < MAX_STACKS) stacks[nstacks].lo = (uint64_t)(uintptr_t)b, stacks[nstacks++].hi = (uint64_t)(uintptr_t)b + size;
     plat_mutex_unlock(&stack_lock);
