@@ -79,3 +79,25 @@ long pathconf(const char *path, int name) {
     default: errno = EINVAL; return -1;
     }
 }
+
+// ---- timegm: UltraTears' runtime calls it (the clock's UTC conversions); the console's libc has none.
+// UTC broken-down time to seconds since the epoch, normalising the fields as the C library's does (days from the civil
+// date: Howard Hinnant's algorithm).
+#include <time.h>
+time_t timegm(struct tm *tm) {
+    long long y = tm->tm_year + 1900LL, m = tm->tm_mon;
+    y += m / 12, m %= 12;
+    if (m < 0) m += 12, y--;
+    long long yy = y - (m < 2);   // March-based year
+    long long era = (yy >= 0 ? yy : yy - 399) / 400;
+    long long yoe = yy - era * 400;
+    long long mp = (m + 10) % 12;   // March = 0 (m: January = 0)
+    long long doy = (153 * mp + 2) / 5;
+    long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long long days = era * 146097 + doe - 719468 + (tm->tm_mday - 1);
+    long long t = days * 86400LL + tm->tm_hour * 3600LL + tm->tm_min * 60LL + tm->tm_sec;
+    time_t r = (time_t)t;
+    struct tm n;
+    if (gmtime_r(&r, &n)) *tm = n;   // (the fields normalised, tm_wday and tm_yday set)
+    return r;
+}
