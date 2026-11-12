@@ -346,6 +346,7 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
                  gather_bits, zero_locals != 0);
         rt_log("gfx_shader: host answers %s", mine);
 #ifdef __PROSPERO__
+        rt_log("[step] gfx_shader: the export's answers (tsword-shader-host.txt beside %s)", cache_dir);
         char want[PATH_CAP + 64], *exe_dir_end = strrchr(cache_dir, '/');
         if (exe_dir_end) {
             snprintf(want, sizeof want, "%.*s/tsword-shader-host.txt", (int)(exe_dir_end - cache_dir), cache_dir);
@@ -359,6 +360,7 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
                 free(f);
             }
         }
+        rt_log("[step] gfx_shader: answers compared");
 #endif
     }
     host_f64 = float64, host_sbuf = sbuf_align, host_gather = gather_bits, host_zero_locals = zero_locals;
@@ -370,6 +372,9 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
     if (gather_bits) n += snprintf((char *)buf + 32 + n, (size_t)(96 - n), " gather=%u", gather_bits);
     if (zero_locals) n += snprintf((char *)buf + 32 + n, (size_t)(96 - n), " zero_locals");
     memcpy(buf, xlate_id, 32);
+#ifdef __PROSPERO__
+    rt_log("[step] gfx_shader: the host options' key");
+#endif
     rt_sha256(buf, 32 + (size_t)n, xlate_id);
     rt_log("gfx_shader: host options %s: own shader cache keys", (char *)buf + 37);
 }

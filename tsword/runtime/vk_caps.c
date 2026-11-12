@@ -122,6 +122,9 @@ void vk_caps_init(VkCtx *c) {
     // Mesa function-local variables start at 0 (docs/maxwell.md 3.12). TOTK_ZERO_LOCALS=1 forces it, 0 turns it off.
     uint32_t zero_locals = env_u32("TOTK_ZERO_LOCALS", (uint32_t)vk_caps.mesa);
     gfx_shader_set_host(vk_caps.float64, vk_caps.sbuf_align, told, gather, zero_locals != 0);
+#ifdef __PROSPERO__
+    rt_log("[step] vk caps: the shader answers set");
+#endif
     if (gather) rt_log("vk caps: gather coordinates biased for %u sub-texel bits (TOTK_GATHER_BIAS)", gather);
 
     char dv[32];

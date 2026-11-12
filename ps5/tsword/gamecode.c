@@ -90,7 +90,7 @@ const char rt_port_version[] = TSWORD_PORT_VERSION;
 //   3. on each USB drive (/mnt/usb0 to usb7) and extended storage (/mnt/ext0 to ext2): TSword/, PPSA99778/, PS5/,
 //      TSword/PS5/ or the drive's top
 // Another folder than the title's: the runtime is pointed at it (TOTK_EXEFS, TOTK_ROMFS, TOTK_ROMFS_INDEX - the
-// romfs-patches folders beside it - TOTK_SHARED_FONTS, TOTK_SHADER_CACHE), and tsgame.so is taken from it when the
+// romfs-patches folders beside it - TOTK_SHARED_FONTS, TOTK_SHADER_CACHE, TOTK_XLATE for totk_xlate.id), and tsgame.so is taken from it when the
 // title folder has none. Saves, logs and settings stay in the title folder.
 static bool exists(const char *path) {
     struct stat st;
@@ -113,6 +113,11 @@ static void use_game_dir(const char *dir) {
     if (exists(p)) setenv("TOTK_SHARED_FONTS", p, 1);
     snprintf(p, sizeof p, "%s/shader-cache", dir);
     if (exists(p) && !exists(GAME_DIR "/shader-cache")) setenv("TOTK_SHADER_CACHE", p, 1);
+    snprintf(p, sizeof p, "%s/totk_xlate.id", dir);   // (the translator's identity: the shader cache's keys)
+    if (exists(p) && !exists(GAME_DIR "/totk_xlate.id")) {
+        snprintf(p, sizeof p, "%s/totk_xlate", dir);
+        setenv("TOTK_XLATE", p, 1);
+    }
     snprintf(p, sizeof p, "%s/tsgame.so", dir);
     if (!exists(GAME_DIR "/tsgame.so") && exists(p)) snprintf(g_lib, sizeof g_lib, "%s", p);
 }

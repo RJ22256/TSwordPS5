@@ -1,0 +1,44 @@
+diff --git a/runtime/gfx_shader.c b/runtime/gfx_shader.c
+index 49e325c..09d07b0 100644
+--- a/runtime/gfx_shader.c
++++ b/runtime/gfx_shader.c
+@@ -346,6 +346,7 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
+                  gather_bits, zero_locals != 0);
+         rt_log("gfx_shader: host answers %s", mine);
+ #ifdef __PROSPERO__
++        rt_log("[step] gfx_shader: the export's answers (tsword-shader-host.txt beside %s)", cache_dir);
+         char want[PATH_CAP + 64], *exe_dir_end = strrchr(cache_dir, '/');
+         if (exe_dir_end) {
+             snprintf(want, sizeof want, "%.*s/tsword-shader-host.txt", (int)(exe_dir_end - cache_dir), cache_dir);
+@@ -359,6 +360,7 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
+                 free(f);
+             }
+         }
++        rt_log("[step] gfx_shader: answers compared");
+ #endif
+     }
+     host_f64 = float64, host_sbuf = sbuf_align, host_gather = gather_bits, host_zero_locals = zero_locals;
+@@ -370,6 +372,9 @@ void gfx_shader_set_host(int float64, uint32_t sbuf_align, const uint32_t subgro
+     if (gather_bits) n += snprintf((char *)buf + 32 + n, (size_t)(96 - n), " gather=%u", gather_bits);
+     if (zero_locals) n += snprintf((char *)buf + 32 + n, (size_t)(96 - n), " zero_locals");
+     memcpy(buf, xlate_id, 32);
++#ifdef __PROSPERO__
++    rt_log("[step] gfx_shader: the host options' key");
++#endif
+     rt_sha256(buf, 32 + (size_t)n, xlate_id);
+     rt_log("gfx_shader: host options %s: own shader cache keys", (char *)buf + 37);
+ }
+diff --git a/runtime/vk_caps.c b/runtime/vk_caps.c
+index bc99712..f8f758b 100644
+--- a/runtime/vk_caps.c
++++ b/runtime/vk_caps.c
+@@ -122,6 +122,9 @@ void vk_caps_init(VkCtx *c) {
+     // Mesa function-local variables start at 0 (docs/maxwell.md 3.12). TOTK_ZERO_LOCALS=1 forces it, 0 turns it off.
+     uint32_t zero_locals = env_u32("TOTK_ZERO_LOCALS", (uint32_t)vk_caps.mesa);
+     gfx_shader_set_host(vk_caps.float64, vk_caps.sbuf_align, told, gather, zero_locals != 0);
++#ifdef __PROSPERO__
++    rt_log("[step] vk caps: the shader answers set");
++#endif
+     if (gather) rt_log("vk caps: gather coordinates biased for %u sub-texel bits (TOTK_GATHER_BIAS)", gather);
+ 
+     char dv[32];
