@@ -1,0 +1,33 @@
+--- a/runtime/dispatch.c
++++ b/runtime/dispatch.c
+@@ -40,9 +40,20 @@
+ static struct { uint64_t addr; GuestFn fn; } g_host[HOST_CAP];
+ static uint64_t g_nhost;
+ 
++#ifdef __PROSPERO__
++void tsword_fatal_notice(const char *msg);   // (TSword PS5: ps5/tsword/gamecode.c - the reason on the TV)
++#endif
++
+ void rt_fatal(const char *fmt, ...) {
+     va_list ap;
+     va_start(ap, fmt);
++#ifdef __PROSPERO__
++    char msg[512];
++    va_list cp;
++    va_copy(cp, ap);
++    vsnprintf(msg, sizeof msg, fmt, cp);
++    va_end(cp);
++#endif
+     rt_log_raw("FATAL: ", 7);
+     rt_vlogf(fmt, ap);
+     rt_log_raw("\n", 1);
+@@ -55,6 +66,9 @@
+     kern_free_cores_note();
+     fflush(stdout);
+     fflush(stderr);
++#ifdef __PROSPERO__
++    tsword_fatal_notice(msg);
++#endif
+     _Exit(70);
+ }
+ 

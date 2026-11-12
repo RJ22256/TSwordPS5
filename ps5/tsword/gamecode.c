@@ -21,11 +21,22 @@
 
 __attribute__((noreturn)) static void no_game(const char *where) {
     fprintf(stderr, "%s (%s)\n", NO_GAME, where);
-    // (on the TV: the SDL subset shows a message box as the console's notification)
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "TSword", "No game code yet: milestone 4's PS5 export brings it "
-                             "from your PC. The runtime started: logs/totk.log in the title folder says how far.", NULL);
-    SDL_Delay(4000);
-    rt_fatal("%s", NO_GAME);
+    rt_fatal("%s", NO_GAME);   // (tsword_fatal_notice puts it on the TV)
+}
+
+// Every fatal stop of the runtime (dispatch.c rt_fatal, ps5/tsword-patches/0002), on the TV before the title closes:
+// the console's notification (the SDL subset's message box), and time to read it. Without game code - the loader's
+// first look at the ExeFS, or a stand-in above - it says so plainly.
+void tsword_fatal_notice(const char *msg) {
+    char text[640];
+    int no_code = rt_layout_count <= 1 && rt_exefs_sha256_count == 0;
+    if (no_code)
+        snprintf(text, sizeof text, "The runtime started, then stopped where it needs the game: no game code yet - the PS5 "
+                                    "export (milestone 4) brings it from your PC. (logs/totk.log has the details.)");
+    else
+        snprintf(text, sizeof text, "Stopped: %s. (logs/totk.log in the title folder has the details.)", msg);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "TSword", text, NULL);
+    SDL_Delay(6000);
 }
 
 // modules.c's
