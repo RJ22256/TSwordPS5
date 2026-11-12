@@ -203,6 +203,18 @@ bool elf_load(const char *path, const ElfExport *exports, size_t nexports, ElfEx
         uint64_t fn = ((uint64_t *)(base + init_array))[i];
         if (fn && fn != ~0ull) ((void (*)(void))(uintptr_t)fn)();  // (already relocated: absolute addresses)
     }
+    // .ctors: the PS5 target's compiler puts constructors there (not .init_array), and ld.lld keeps the section
+    // without a dynamic tag for it, so only its name finds it. Run last to first, as crtstuff does; 0 and -1 are its
+    // markers. (The runtime's own constructors in the library: ov_zstd.c and mouse_direct.c register their host
+    // functions on the patch page there - v0.3.5 stopped at the zstd one, "no function at guest pc ...fff0".)
+    {
+        size_t csize = 0;
+        const uint64_t *ctors = elf_section(out, ".ctors", &csize);
+        for (size_t i = csize / 8; ctors && i-- > 0;) {
+            uint64_t fn = ctors[i];
+            if (fn && fn != ~0ull) ((void (*)(void))(uintptr_t)fn)();
+        }
+    }
     ok = true;
 done:
     free(file);
