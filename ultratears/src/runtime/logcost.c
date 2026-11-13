@@ -26,8 +26,96 @@ int __real_vfprintf(FILE *f, const char *fmt, va_list ap);
 int __real_fputs(const char *s, FILE *f);
 int __real_fputc(int c, FILE *f);
 
+#ifdef __PROSPERO__
+// (TSword PS5 0.4.10) The log written by a thread of its own. Each line was a write to the file from the thread that
+// logged it, and on the console a write took up to seconds (the long-frame lines: "log 4 writes / 3794 ms"): the game's
+// threads waited for the log, frame after frame, until the game made no frames at all. Lines now go into a ring in
+// memory and the writer thread empties it into the file; a full ring drops lines (counted) rather than wait.
+#include <pthread.h>
+#include <string.h>
+#include <unistd.h>
+#define LOG_RING (4u << 20)
+static char g_ring[LOG_RING];
+static uint64_t g_head, g_tail, g_dropped;   // bytes in and out, ever
+static pthread_mutex_t g_rm = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_rc = PTHREAD_COND_INITIALIZER;
+static int g_writer;   // 0 not started, 1 running, -1 none (written directly)
+static void *log_writer(void *unused) {
+    (void)unused;
+    static char buf[65536];
+    for (;;) {
+        pthread_mutex_lock(&g_rm);
+        while (g_head == g_tail) pthread_cond_wait(&g_rc, &g_rm);
+        uint64_t n = g_head - g_tail, dropped = g_dropped;
+        if (n > sizeof buf) n = sizeof buf;
+        for (uint64_t i = 0; i < n; i++) buf[i] = g_ring[(g_tail + i) % LOG_RING];
+        g_dropped = 0;
+        pthread_mutex_unlock(&g_rm);
+        for (size_t done = 0; done < n;) {
+            ssize_t w = write(STDERR_FILENO, buf + done, (size_t)n - done);
+            if (w <= 0) break;
+            done += (size_t)w;
+        }
+        if (dropped) {
+            char note[96];
+            int l = snprintf(note, sizeof note, "\n[log] %llu bytes of log lines dropped (the file could not keep up)\n",
+                             (unsigned long long)dropped);
+            if (write(STDERR_FILENO, note, (size_t)l) < 0) {}
+        }
+        pthread_mutex_lock(&g_rm);
+        g_tail += n;
+        pthread_cond_broadcast(&g_rc);
+        pthread_mutex_unlock(&g_rm);
+    }
+    return NULL;
+}
+static int log_push(const char *s, size_t n) {   // 1: taken (or dropped), 0: write it directly
+    if (g_writer < 0) return 0;
+    static __thread int t_holding;   // (a crash handler on the thread that holds the lock: its line goes straight out)
+    if (t_holding) return 0;
+    pthread_mutex_lock(&g_rm);
+    t_holding = 1;
+    if (!g_writer) {
+        pthread_t t;
+        g_writer = pthread_create(&t, NULL, log_writer, NULL) ? -1 : 1;
+        if (g_writer > 0) pthread_detach(t);
+        else { t_holding = 0; pthread_mutex_unlock(&g_rm); return 0; }
+    }
+    if (g_head - g_tail + n > LOG_RING) g_dropped += n;
+    else for (size_t i = 0; i < n; i++) g_ring[(g_head + i) % LOG_RING] = s[i];
+    g_head += g_head - g_tail + n > LOG_RING ? 0 : n;
+    pthread_cond_signal(&g_rc);
+    t_holding = 0;
+    pthread_mutex_unlock(&g_rm);
+    return 1;
+}
+// Before the title ends (plat_fatal_notice): the lines still in the ring onto the file, for at most ms.
+void runtime_log_drain(unsigned ms) {
+    if (g_writer <= 0) return;
+    for (unsigned i = 0; i < ms; i += 10) {
+        pthread_mutex_lock(&g_rm);
+        int empty = g_head == g_tail;
+        pthread_mutex_unlock(&g_rm);
+        if (empty) return;
+        usleep(10000);
+    }
+}
+static __thread char t_line[16384];   // (not on the stack: some game threads have only a few KiB of it)
+#else
+void runtime_log_drain(unsigned ms) { (void)ms; }
+#endif
+
 int __wrap_vfprintf(FILE *f, const char *fmt, va_list ap) {
     if (!is_log(f)) return __real_vfprintf(f, fmt, ap);
+#ifdef __PROSPERO__
+    {
+        va_list aq;
+        va_copy(aq, ap);
+        int n = vsnprintf(t_line, sizeof t_line, fmt, aq);
+        va_end(aq);
+        if (n >= 0 && (size_t)n < sizeof t_line && log_push(t_line, (size_t)n)) { atomic_fetch_add(&g_writes, 1); return n; }
+    }
+#endif
     uint64_t t0 = plat_now_ns();
     int r = __real_vfprintf(f, fmt, ap);
     account(t0);
@@ -44,6 +132,9 @@ int __wrap_fprintf(FILE *f, const char *fmt, ...) {
 
 int __wrap_fputs(const char *s, FILE *f) {
     if (!is_log(f)) return __real_fputs(s, f);
+#ifdef __PROSPERO__
+    if (log_push(s, strlen(s))) { atomic_fetch_add(&g_writes, 1); return 1; }
+#endif
     uint64_t t0 = plat_now_ns();
     int r = __real_fputs(s, f);
     account(t0);
@@ -52,6 +143,9 @@ int __wrap_fputs(const char *s, FILE *f) {
 
 int __wrap_fputc(int c, FILE *f) {
     if (!is_log(f)) return __real_fputc(c, f);
+#ifdef __PROSPERO__
+    { char ch = (char)c; if (log_push(&ch, 1)) { atomic_fetch_add(&g_writes, 1); return (unsigned char)c; } }
+#endif
     uint64_t t0 = plat_now_ns();
     int r = __real_fputc(c, f);
     account(t0);

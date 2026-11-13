@@ -641,6 +641,8 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
 // Fatal error: a notification on the console (the SDL subset shows it); the details are in the log.
 void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
+    void runtime_log_drain(unsigned ms);   // (0.4.10) the log's writer thread: its last lines onto the file first
+    runtime_log_drain(1000);
     fflush(stderr);
     void tsword_fatal_notice(void);   // ps5/tsword/gamecode.c: the reason as the TV's notification
     tsword_fatal_notice();

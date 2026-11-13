@@ -89,7 +89,8 @@ static void *log_mirror_thread(void *unused) {
                 if (pwrite(out, buf, (size_t)n, done) != n) break;
                 done += n, wrote = true;
             }
-            if (wrote) fsync(out);
+            static int n;
+            if (wrote && ++n % 5 == 0) fsync(out);   // (0.4.10) onto the drive every 5 s, not every second
         }
         if (in >= 0) close(in);
         if (out >= 0) close(out);
