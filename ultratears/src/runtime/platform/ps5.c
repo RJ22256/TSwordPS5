@@ -575,7 +575,7 @@ __attribute__((constructor(101))) static void log_to_title_folder(void) {
     rename(g_log_path, TITLE_DIR "/ultratears-previous.log");
     if (!freopen(g_log_path, "w", stderr)) { g_log_path[0] = 0; return; }
     setvbuf(stderr, NULL, _IONBF, 0);
-    dup2(STDERR_FILENO, STDOUT_FILENO);
+    dup2(fileno(stderr), STDOUT_FILENO);   // (0.4.11: the log's own descriptor; freopen need not keep it at 2)
 }
 
 void plat_debug_console(int debug) { (void)debug; }

@@ -40,6 +40,7 @@ static uint64_t g_head, g_tail, g_dropped;   // bytes in and out, ever
 static pthread_mutex_t g_rm = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_rc = PTHREAD_COND_INITIALIZER;
 static int g_writer;   // 0 not started, 1 running, -1 none (written directly)
+static int g_fd = -1;   // the log file's own descriptor: fileno(stderr) (on the console freopen does not keep it at 2)
 static void *log_writer(void *unused) {
     (void)unused;
     static char buf[65536];
@@ -51,8 +52,10 @@ static void *log_writer(void *unused) {
         for (uint64_t i = 0; i < n; i++) buf[i] = g_ring[(g_tail + i) % LOG_RING];
         g_dropped = 0;
         pthread_mutex_unlock(&g_rm);
+        int fd = fileno(stderr);   // (each time: the log may be reopened after the writer started)
+        g_fd = fd;
         for (size_t done = 0; done < n;) {
-            ssize_t w = write(STDERR_FILENO, buf + done, (size_t)n - done);
+            ssize_t w = write(g_fd, buf + done, (size_t)n - done);
             if (w <= 0) break;
             done += (size_t)w;
         }
@@ -60,7 +63,7 @@ static void *log_writer(void *unused) {
             char note[96];
             int l = snprintf(note, sizeof note, "\n[log] %llu bytes of log lines dropped (the file could not keep up)\n",
                              (unsigned long long)dropped);
-            if (write(STDERR_FILENO, note, (size_t)l) < 0) {}
+            if (write(g_fd, note, (size_t)l) < 0) {}
         }
         pthread_mutex_lock(&g_rm);
         g_tail += n;
@@ -76,6 +79,10 @@ static int log_push(const char *s, size_t n) {   // 1: taken (or dropped), 0: wr
     pthread_mutex_lock(&g_rm);
     t_holding = 1;
     if (!g_writer) {
+        // (0.4.11) the writer only once the log is the file: 0.4.10 wrote to descriptor 2, which on the console was
+        // not the log (freopen gave it another number) - its lines were lost, or went into whatever file 2 was
+        g_fd = fileno(stderr);
+        if (g_fd < 0) { g_writer = -1; t_holding = 0; pthread_mutex_unlock(&g_rm); return 0; }
         pthread_t t;
         g_writer = pthread_create(&t, NULL, log_writer, NULL) ? -1 : 1;
         if (g_writer > 0) pthread_detach(t);
