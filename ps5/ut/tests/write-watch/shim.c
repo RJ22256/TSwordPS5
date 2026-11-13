@@ -51,3 +51,6 @@ bool rt_fault_watch(uint64_t a, uint64_t pc) { (void)a, (void)pc; return false; 
 void rt_fault_report(const char *w, uint64_t fa, uint64_t pc, uint64_t lr) { fprintf(stderr, "REAL FAULT %s at %llx pc %llx\n", w, (unsigned long long)fa, (unsigned long long)pc); _exit(3); }
 const char *rt_host_fn_name(uint64_t pc, uint64_t *o) { (void)pc, (void)o; return NULL; }
 void tsword_fatal_notice(void) {}
+
+// (0.4.10) ps5.c drains the log writer (runtime/logcost.c) before a fatal notice; not linked into the test
+void runtime_log_drain(unsigned ms) { (void)ms; }
