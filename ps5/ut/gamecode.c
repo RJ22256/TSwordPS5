@@ -111,6 +111,53 @@ static void log_mirror_start(const char *dir) {
     }
 }
 
+// (0.4.7) Safe mode: the console's defaults while TSword stops after its first frame. Every optional thread, speed-up
+// and risky path at its plainest; ultratears.cfg can set any of them otherwise (a line naming it wins), and
+// TOTK_SAFE_MODE=0 there leaves them all at UltraTears' own defaults.
+static const char *const k_safe[][2] = {
+    {"TOTK_FREE_CORES", "1"},          // no virtual cores: game threads are ordinary threads (no core hand-overs)
+    {"TOTK_ASYNC_REPLAY", "0"},        // graphics replayed on the game's thread, no translation thread
+    {"TOTK_VK_RECORD_THREADS", "1"},   // one recording thread
+    {"TOTK_VK_PARTIAL_SUBMIT", "0"},   // each submission in one call
+    {"TOTK_VK_MEM_READY", "0"},        // no spare memory made ahead on its own thread
+    {"TOTK_SHADER_AHEAD", "0"},        // no shader compiling ahead on its own thread
+    {"TOTK_TEX_PREFETCH", "0"},        // no texture prefetching
+    {"TOTK_WB_FENCE", "0"},            // GPU-drawn images written back the plain way
+    {"TOTK_POOL_EARLY_RELEASE", "0"},  // memory pools kept until the game releases them
+    {"TOTK_VK_ROBUST", "2"},           // out-of-range GPU buffer reads give 0 instead of faulting
+};
+static bool cfg_names(const char *cfg, const char *key) {   // a line "KEY=..." (not a comment)
+    size_t n = strlen(key);
+    for (const char *l = cfg; l && *l; l = strchr(l, '\n') ? strchr(l, '\n') + 1 : NULL) {
+        while (*l == ' ' || *l == '\t') l++;
+        if (!strncmp(l, key, n) && (l[n] == '=' || l[n] == ' ')) return true;
+    }
+    return false;
+}
+static void safe_mode(void) {
+    static char cfg[16384];
+    cfg[0] = 0;
+    FILE *f = fopen(TITLE_DIR "/ultratears.cfg", "r");
+    if (f) { size_t n = fread(cfg, 1, sizeof cfg - 1, f); cfg[n] = 0; fclose(f); }
+    if (cfg_names(cfg, "TOTK_SAFE_MODE")) {
+        const char *v = strstr(cfg, "TOTK_SAFE_MODE");
+        v = strchr(v, '=');
+        if (v && v[1] == '0') { fprintf(stderr, "[tsword] safe mode: off (TOTK_SAFE_MODE=0)\n"); return; }
+    }
+    char kept[512] = "";
+    int set = 0;
+    for (unsigned i = 0; i < sizeof k_safe / sizeof *k_safe; i++) {
+        if (cfg_names(cfg, k_safe[i][0]) || getenv(k_safe[i][0])) {
+            size_t l = strlen(kept);
+            snprintf(kept + l, sizeof kept - l, "%s%s", l ? ", " : "", k_safe[i][0]);
+            continue;
+        }
+        setenv(k_safe[i][0], k_safe[i][1], 1), set++;
+    }
+    fprintf(stderr, "[tsword] safe mode: %d settings at their plainest (TOTK_SAFE_MODE=0 in ultratears.cfg: off)%s%s\n", set,
+            kept[0] ? "; ultratears.cfg's own: " : "", kept);
+}
+
 static void find_game_files(void) {
     // what stays in the title folder: the console's own compiled shaders (its driver's, not the PC's), the saves
     setenv("TOTK_SHADER_BIN", TITLE_DIR "/data/shaders/compiled-ps5.bin", 0);
@@ -187,6 +234,7 @@ static bool read_text(const char *path, char *out, size_t n) {
 
 // Before the runtime's main (ps5_glue.c __wrap_main). false: g_why says what's missing.
 bool tsword_gamecode_load(void) {
+    safe_mode();
     find_game_files();
     if (!exists(g_lib)) {
         snprintf(g_why, sizeof g_why,

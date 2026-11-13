@@ -234,7 +234,10 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns);
 static thr_t *g_core_owner[NCORE];
 static thr_t *g_core_wait;
 static int g_cores_on = -1;
-static int cores_enabled(void) { if (g_cores_on < 0) g_cores_on = getenv("TOTK_FREE_CORES") ? 0 : 1; return g_cores_on; }
+static int cores_enabled(void) {   // (TSword PS5 0.4.7: TOTK_FREE_CORES=0 counts as not set, so ultratears.cfg can say it)
+    if (g_cores_on < 0) { const char *e = getenv("TOTK_FREE_CORES"); g_cores_on = e && *e != '0' ? 0 : 1; }
+    return g_cores_on;
+}
 static int core_allowed(const thr_t *t, int c) { return (int)((t->mask >> c) & 1); }
 /* Horizon's priority inheritance (UltraTears, 2026-11-04): a thread that owns a guest mutex counts at the priority of
    the best thread blocked on it, for handing out cores and for preemption. Without it a low-priority owner of a mutex
