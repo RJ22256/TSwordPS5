@@ -127,6 +127,11 @@ static const char *const k_safe[][2] = {
     {"TOTK_POOL_EARLY_RELEASE", "0"},  // memory pools kept until the game releases them
     {"TOTK_VK_ROBUST", "2"},           // out-of-range GPU buffer reads give 0 instead of faulting
     {"TOTK_VK_CHECKPOINTS", "1"},      // (0.4.13) GPU markers: a stop names the GPU commands it ran last
+    // (0.4.16) game memory imported for the GPU, as WSword does on this driver, instead of copies of every pool: without
+    // the write watch the copies cannot tell the game's newer bytes from the GPU's, and their copy back overwrote the
+    // game's heap (0.4.15: both runs crashed inside the game's allocator, a pointer 0x00ffff0000000000 / 0x8); and the
+    // copies took ~1 GiB more memory
+    {"TOTK_POOL_IMPORT", "1"},
 };
 static bool cfg_names(const char *cfg, const char *key) {   // a line "KEY=..." (not a comment)
     size_t n = strlen(key);
