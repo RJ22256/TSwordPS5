@@ -125,6 +125,7 @@ typedef struct thr {
     uint64_t st_inv_ns, st_inv_max;   // core waits while a worse-priority thread held a core this one may use: total, longest
     // asynchronous preemption (below): this thread's host-call depth and Cpu (TLR), interruption state
     volatile int *depth; Cpu *cpu; int ap_ok, ap_pending; uint64_t ap_rip, ap_last;
+    const char *volatile host_fn; volatile uint64_t host_t0;   // (0.4.12) the host call it is in, since when (stall report)
 #ifdef _WIN32
     HANDLE ap_h; CONTEXT *ap_ctx;
 #else
@@ -695,6 +696,12 @@ static void pi_lock_wait(const thr_t *t) {
     uint32_t h = __atomic_load_n((const uint32_t *)(uintptr_t)t->waddr, __ATOMIC_RELAXED) & ~WAITERS_BIT;
     for (const thr_t *o = g_core_wait; o; o = o->cnext)
         if (o->handle == h) { core_kick(o); return; }
+}
+void runtime_thread_host(const char *name) {   // (runtime/dispatch.c) entering / leaving a host call at depth 0
+    thr_t *t = t_self;
+    if (!t) return;
+    if (name) t->host_t0 = now_ns();
+    t->host_fn = name;
 }
 void runtime_thread_note_hle(unsigned i) { thr_t *t = me_or_null(); if (t) t->last_hle = (int)i + 1; }   // hle_stack.c, while tracing
 uint32_t runtime_thread_current_handle(void) { thr_t *t = me_or_null(); return t ? t->handle : 0; }
@@ -1357,6 +1364,9 @@ void runtime_dump_threads(void) {
         fprintf(stderr, "[stall]   %#x prio %d core %d%s: waits for %s", t->handle, t->prio, t->cur_core,
                 t->preempt ? " (a better thread wants its core)" : "", t->wkind >= 0 && t->wkind < 5 ? kinds[t->wkind] : "?");
         if (t->wkind == 1 || t->wkind == 3) fprintf(stderr, " %#llx", (unsigned long long)t->waddr);
+        if (t->wkind == 1) fprintf(stderr, " (held by %#x)", ld32(t->waddr) & ~WAITERS_BIT);
+        const char *hf = t->host_fn;
+        if (hf) fprintf(stderr, ", in the host call %s for %.1f s", hf, (now - t->host_t0) / 1e9);
         if (t->wkind == 4) for (int i = 0; i < t->nwh && i < 4; i++) fprintf(stderr, " %#x", t->wh[i]);
         if (t->core_t0) fprintf(stderr, ", for a core since %.1f s", (now - t->core_t0) / 1e9);
         fprintf(stderr, "; last SVC %#x, %llu SVCs; from %s+%#llx (lr %#llx)\n", t->last_svc, (unsigned long long)t->nsvc,

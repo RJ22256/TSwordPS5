@@ -67,11 +67,16 @@ __attribute__((weak)) void runtime_core_back(int *away) { (void)away; }
    at 0: deeper, the host frames below may hold a host lock. */
 __thread int rt_host_depth;
 static __thread GuestFn t_hostfn;
+static __thread const char *t_hostname;   // (the stall report) the host call t_hostfn / t_native is
+// (TSword PS5 0.4.12) which host call a guest thread is in, for the stall report (host/threads.c)
+__attribute__((weak)) void runtime_thread_host(const char *name) { (void)name; }
 static void hle_fn_thunk(Cpu *c) {   // an HLE_FUNC or an override, counted in rt_host_depth
     GuestFn f = t_hostfn;
+    if (!rt_host_depth) runtime_thread_host(t_hostname);
     rt_host_depth++;
     f(c);
     rt_host_depth--;
+    if (!rt_host_depth) runtime_thread_host(NULL);
 }
 
 void hle_native_thunk(Cpu *c) {
@@ -79,10 +84,12 @@ void hle_native_thunk(Cpu *c) {
     uint64_t (*f)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) = s->native;
     char kind = s->ret;
     int away = 0;
+    if (!rt_host_depth) runtime_thread_host(s->name);
     rt_host_depth++;
     if (kind >= 'A' && kind <= 'Z') kind += 32, away = runtime_core_away();   // HLE_NATIVE_BLOCKING
     uint64_t r = f(c->x[0], c->x[1], c->x[2], c->x[3], c->x[4], c->x[5], c->x[6], c->x[7]);
     rt_host_depth--;
+    if (!rt_host_depth) runtime_thread_host(NULL);
     if (away) runtime_core_back(&away);
     switch (kind) {
     case 'v': break;
@@ -208,13 +215,13 @@ static GuestFn dispatch_slow(Cpu *c) {
         int i = (int)((pc - HLE_BASE) / 16);
         if (i < hle_count) {
             if (hle_slots[i].native) { t_native = &hle_slots[i]; return hle_native_thunk; }
-            if (hle_slots[i].fn) { t_hostfn = hle_slots[i].fn; return hle_fn_thunk; }
+            if (hle_slots[i].fn) { t_hostfn = hle_slots[i].fn; t_hostname = hle_slots[i].name; return hle_fn_thunk; }
             unimpl_pc = pc;
             return hle_unimplemented;
         }
     }
     for (int i = 0; i < override_count; i++)
-        if (overrides[i].addr == pc) { t_hostfn = overrides[i].fn; return hle_fn_thunk; }
+        if (overrides[i].addr == pc) { t_hostfn = overrides[i].fn; t_hostname = "a game function's override"; return hle_fn_thunk; }
     GuestFn f = dispatch_lookup(pc);
     if (!f) {
         uint64_t off = 0;
