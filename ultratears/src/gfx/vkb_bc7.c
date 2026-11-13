@@ -116,7 +116,11 @@ static int open_files(void) {   // g_mu held
 #else
     const void *plat_map_file(const char *path, uint64_t len, uint64_t *size);   // platform/linux.c (mmap: not reachable here)
     uint64_t mapped_size;
+#ifdef __PROSPERO__
+    (void)mapped_size;   // (0.4.15) read, not mapped, on the console: page faults on the USB drive could not be interrupted
+#else
     if (pack_size > 0) g_map = plat_map_file(path, (uint64_t)pack_size, &mapped_size);
+#endif
 #endif
     if (g_map) g_map_size = (uint64_t)pack_size;
     VLOG("BC7 cache %s: %zu surfaces, %.1f MiB%s", d, g_n, pack_size / 1048576.0, g_map ? " (mapped)" : "");

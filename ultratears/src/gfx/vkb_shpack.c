@@ -27,9 +27,58 @@ static const rec_t *g_idx;
 static size_t g_n, g_size;
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 
+#ifdef __PROSPERO__
+// (TSword PS5 0.4.15) Read, not mapped: a mapped pack is read by page faults, in the kernel, where a thread cannot be
+// stopped or interrupted, and from the USB drive the game reads its files from at the same time. 0.4.11-0.4.14 stopped
+// with the replaying thread stuck there (it did not answer a signal) as a new scene's first shaders were looked up, and
+// the whole console froze with it. The index (64 bytes a shader) is read into memory once; a shader's bytes with pread.
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+static int g_fd = -1;
+static rec_t *g_idx_mem;
+static int read_at(void *dst, size_t n, uint64_t off) {
+    for (size_t done = 0; done < n;) {
+        ssize_t r = pread(g_fd, (uint8_t *)dst + done, n - done, (off_t)(off + done));
+        if (r <= 0) return 0;
+        done += (size_t)r;
+    }
+    return 1;
+}
+#endif
 static void open_pack(void) {
     const char *path = getenv("TOTK_SHADER_PACK");
     if (!path || !*path) path = "data/shaders/translated.pack";
+#ifdef __PROSPERO__
+    {
+        int fd = open(path, O_RDONLY);
+        struct stat st;
+        uint8_t h[24];
+        if (fd < 0 || fstat(fd, &st) || st.st_size < 32) { VLOG("shader pack %s: cannot open it", path); if (fd >= 0) close(fd); return; }
+        g_fd = fd;
+        uint32_t version, count;
+        uint64_t at;
+        if (!read_at(h, sizeof h, 0)) { VLOG("shader pack %s: cannot read it", path); return; }
+        memcpy(&version, h + 8, 4);
+        memcpy(&count, h + 12, 4);
+        memcpy(&at, h + 16, 8);
+        if (memcmp(h, "UTSPACK1", 8) || (version != 1 && version != 2) || at + (uint64_t)count * sizeof(rec_t) > (uint64_t)st.st_size) {
+            VLOG("shader pack %s: not a shader pack or damaged", path);
+            return;
+        }
+        if (!(g_idx_mem = malloc((size_t)count * sizeof(rec_t))) || !read_at(g_idx_mem, (size_t)count * sizeof(rec_t), at)) {
+            VLOG("shader pack %s: its index cannot be read", path);
+            free(g_idx_mem), g_idx_mem = NULL;
+            return;
+        }
+        g_idx = g_idx_mem;
+        g_n = count;
+        g_size = (size_t)st.st_size;
+        g_map = (const uint8_t *)1;   // (only "open": nothing is mapped on the console)
+        VLOG("shader pack %s: %zu shaders, %.0f MiB (read as needed, not mapped)", path, g_n, g_size / 1048576.0);
+        return;
+    }
+#endif
 #ifdef _WIN32
     HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (f == INVALID_HANDLE_VALUE) return;
@@ -92,10 +141,25 @@ int vkb_shpack_get(const char *key, char **json, uint32_t **spv, size_t *spv_byt
             char *j = malloc((size_t)r->json_len + 1);
             uint32_t *s = malloc(r->spv_len ? r->spv_len : 4);
             if (!j || !s) { free(j); free(s); return 0; }
+#ifdef __PROSPERO__
+            uint8_t *z = r->spv_stored ? malloc(stored ? stored : 1) : NULL;
+            int got = read_at(j, r->json_len, r->json_off) &&
+                      (r->spv_stored ? z && read_at(z, stored, r->spv_off) : read_at(s, r->spv_len, r->spv_off));
+            j[r->json_len] = 0;
+            if (!got) { VLOG("shader pack: shader %.12s cannot be read", key); free(z); free(j); free(s); return 0; }
+            if (r->spv_stored && ZSTD_decompress(s, r->spv_len, z, stored) != r->spv_len) {
+                VLOG("shader pack: shader %.12s does not unpack (the file is damaged)", key);
+                free(z); free(j); free(s);
+                return 0;
+            }
+            free(z);
+            if (0) {
+#else
             memcpy(j, g_map + r->json_off, r->json_len);
             j[r->json_len] = 0;
             if (!r->spv_stored) memcpy(s, g_map + r->spv_off, r->spv_len);
             else if (ZSTD_decompress(s, r->spv_len, g_map + r->spv_off, stored) != r->spv_len) {
+#endif
                 VLOG("shader pack: shader %.12s does not unpack (the file is damaged)", key);
                 free(j); free(s);
                 return 0;
