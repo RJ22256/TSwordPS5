@@ -62,10 +62,11 @@ const Choice k_sharp[] = {{"0", "Off"}, {"25", "25%"}, {"", "50%"}, {"75", "75%"
 const Choice k_layout[] = {{"xbox", "Cross confirms (PlayStation)"}, {"nintendo", "Circle confirms (Switch)"}};
 const Choice k_overlay[] = {{"", "Off"}, {"fps", "FPS"}, {"full", "Full"}};
 const Choice k_fg[] = {{"", "Off"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}};
+const Choice k_speed[] = {{"safe", "Safe"}, {"", "Balanced"}, {"full", "Full"}};
 template <size_t N> constexpr int count(const Choice (&)[N]) { return (int)N; }
 
 struct Setting { const char *key; const Choice *opts; int n, def; bool live; int start, cur; };
-enum { S_RES, S_SCALE, S_FPS, S_UPSCALE, S_AA, S_SHARP, S_LAYOUT, S_OVERLAY, S_FG, S_COUNT };
+enum { S_RES, S_SCALE, S_FPS, S_UPSCALE, S_AA, S_SHARP, S_LAYOUT, S_OVERLAY, S_FG, S_SPEED, S_COUNT };
 Setting g_set[S_COUNT] = {
     {"resolution", k_res, count(k_res), 0, false, 0, 0},
     {"scale", k_scale, count(k_scale), 4, false, 0, 0},
@@ -76,6 +77,7 @@ Setting g_set[S_COUNT] = {
     {"pad_layout", k_layout, count(k_layout), 0, false, 0, 0},
     {"perf_overlay", k_overlay, count(k_overlay), 0, true, 0, 0},
     {"framegen", k_fg, count(k_fg), 0, true, 0, 0},
+    {"speedups", k_speed, count(k_speed), 1, false, 0, 0},
 };
 std::atomic<int> g_overlay_mode{0}, g_fg_mode{0};   // (read by other threads: the overlay, frame generation)
 
@@ -128,7 +130,7 @@ void setting_store(int which, int v) {
 std::string pending_restart(void) {
     std::string t;
     static const char *const names[S_COUNT] = {"resolution", "3D resolution", "frame rate", "upscaler", "anti-aliasing",
-                                               "sharpness", "button layout", "", ""};
+                                               "sharpness", "button layout", "", "", "speed-ups"};
     for (int i = 0; i < S_COUNT; i++)
         if (!g_set[i].live && g_set[i].cur != g_set[i].start) t += (t.empty() ? "" : ", ") + std::string(names[i]);
     return t;
@@ -638,6 +640,10 @@ void page_performance(float rs) {
           "title folder's lsfg/Lossless.dll.";
     if (why) fg_desc += std::string(" Stopped: ") + why;
     choice_row(S_FG, "Frame generation", fg_desc.c_str());
+    choice_row(S_SPEED, "Speed-ups", "Balanced: the game's graphics are translated and recorded on their own threads, as on "
+               "the PC. Full: also shaders compiled and textures read ahead. Safe: everything on the game's own thread, "
+               "as TSword ran while it froze after its first frame - slow; for when the others stop. Applies at the "
+               "next start.");
     opt_section("Overlay");
     choice_row(S_OVERLAY, "Performance overlay", "Top right: the frame rate (FPS), or everything (Full) - the CPU, the "
                "temperatures, memory, the frame times and the resolution. Applies at once.");

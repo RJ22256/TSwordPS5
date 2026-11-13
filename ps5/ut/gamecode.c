@@ -112,28 +112,39 @@ static void log_mirror_start(const char *dir) {
     }
 }
 
-// (0.4.7) Safe mode: the console's defaults while TSword stops after its first frame. Every optional thread, speed-up
-// and risky path at its plainest; ultratears.cfg can set any of them otherwise (a line naming it wins), and
-// TOTK_SAFE_MODE=0 there leaves them all at UltraTears' own defaults.
-static const char *const k_safe[][2] = {
-    // (0.4.17) not TOTK_FREE_CORES any more: the virtual cores give the game its three cores, one thread on each at a
-    // time; without them dozens of threads ran at once under the same core numbers and corrupted the game's per-core
-    // heap data (0.4.15 / 0.4.16 crashed in the same allocator function, f_1800082e00, whatever the pools were)
-    {"TOTK_ASYNC_REPLAY", "0"},        // graphics replayed on the game's thread, no translation thread
-    {"TOTK_VK_RECORD_THREADS", "1"},   // one recording thread
-    {"TOTK_VK_PARTIAL_SUBMIT", "0"},   // each submission in one call
-    {"TOTK_VK_MEM_READY", "0"},        // no spare memory made ahead on its own thread
-    {"TOTK_SHADER_AHEAD", "0"},        // no shader compiling ahead on its own thread
-    {"TOTK_TEX_PREFETCH", "0"},        // no texture prefetching
-    {"TOTK_WB_FENCE", "0"},            // GPU-drawn images written back the plain way
-    {"TOTK_POOL_EARLY_RELEASE", "0"},  // memory pools kept until the game releases them
-    {"TOTK_VK_ROBUST", "2"},           // out-of-range GPU buffer reads give 0 instead of faulting
-    {"TOTK_VK_CHECKPOINTS", "1"},      // (0.4.13) GPU markers: a stop names the GPU commands it ran last
+// Speed-ups (speedups= in ultratears.cfg, TSword's menu: Performance > Speed-ups; applied at the start):
+//   safe       (0.4.7) every optional thread, speed-up and risky path at its plainest - what TSword ran while it froze
+//              after its first frame (the causes were found since: the shader pack read through mmap from a USB drive,
+//              slow BC7 reads from a hard drive, the log's slow writes, the game without its virtual cores)
+//   (unset)    (0.5.1) balanced: the graphics replayed on their own thread and recorded on three, submitted in parts,
+//              as on the PC - the 0.5.0 runs spent 20-55 ms of each frame replaying on the game's own thread, the GPU
+//              6; no GPU markers (one before every draw, and they held the recording to one thread). Prefetching,
+//              shaders and memory made ahead stay off
+//   full       UltraTears' own defaults, those too
+// Every level keeps what TSword needs to be correct on this console (k_always). A cfg line naming one of the settings
+// wins; TOTK_SAFE_MODE=0 (0.4.7's switch) is "full".
+static const char *const k_always[][2] = {
     // (0.4.16) game memory imported for the GPU, as WSword does on this driver, instead of copies of every pool: without
     // the write watch the copies cannot tell the game's newer bytes from the GPU's, and their copy back overwrote the
     // game's heap (0.4.15: both runs crashed inside the game's allocator, a pointer 0x00ffff0000000000 / 0x8); and the
     // copies took ~1 GiB more memory
     {"TOTK_POOL_IMPORT", "1"},
+    {"TOTK_POOL_EARLY_RELEASE", "0"},  // memory pools kept until the game releases them (they are the game's memory)
+    {"TOTK_WB_FENCE", "0"},            // GPU-drawn images written back the plain way
+    {"TOTK_VK_ROBUST", "2"},           // out-of-range GPU buffer reads give 0 instead of faulting (a fault stops the console)
+};
+// (0.4.17: not TOTK_FREE_CORES any more - the virtual cores give the game its three cores, one thread on each at a time;
+// without them dozens of threads ran at once under the same core numbers and corrupted the game's per-core heap data)
+static const char *const k_safe[][2] = {
+    {"TOTK_ASYNC_REPLAY", "0"},        // graphics replayed on the game's thread, no translation thread
+    {"TOTK_VK_RECORD_THREADS", "1"},   // one recording thread
+    {"TOTK_VK_PARTIAL_SUBMIT", "0"},   // each submission in one call
+    {"TOTK_VK_CHECKPOINTS", "1"},      // (0.4.13) GPU markers: a stop names the GPU commands it ran last
+};
+static const char *const k_balanced[][2] = {
+    {"TOTK_VK_MEM_READY", "0"},        // no spare memory made ahead on its own thread
+    {"TOTK_SHADER_AHEAD", "0"},        // no shader compiling ahead on its own thread
+    {"TOTK_TEX_PREFETCH", "0"},        // no texture prefetching
 };
 static bool cfg_names(const char *cfg, const char *key) {   // a line "KEY=..." (not a comment)
     size_t n = strlen(key);
@@ -143,28 +154,48 @@ static bool cfg_names(const char *cfg, const char *key) {   // a line "KEY=..." 
     }
     return false;
 }
+static int cfg_value(const char *cfg, const char *key, char *out, size_t n) {   // the last "KEY=value" line's value
+    size_t k = strlen(key);
+    int found = 0;
+    for (const char *l = cfg; l && *l; l = strchr(l, '\n') ? strchr(l, '\n') + 1 : NULL) {
+        while (*l == ' ' || *l == '\t') l++;
+        if (strncmp(l, key, k) || l[k] != '=') continue;
+        size_t m = strcspn(l + k + 1, "\r\n");
+        if (m >= n) m = n - 1;
+        memcpy(out, l + k + 1, m), out[m] = 0;
+        found = 1;
+    }
+    return found;
+}
 static void safe_mode(void) {
     static char cfg[16384];
     cfg[0] = 0;
     FILE *f = fopen(TITLE_DIR "/ultratears.cfg", "r");
     if (f) { size_t n = fread(cfg, 1, sizeof cfg - 1, f); cfg[n] = 0; fclose(f); }
-    if (cfg_names(cfg, "TOTK_SAFE_MODE")) {
-        const char *v = strstr(cfg, "TOTK_SAFE_MODE");
-        v = strchr(v, '=');
-        if (v && v[1] == '0') { fprintf(stderr, "[tsword] safe mode: off (TOTK_SAFE_MODE=0)\n"); return; }
-    }
+    char v[32] = "";
+    int level = 1;   // 0 safe, 1 balanced, 2 full
+    if (cfg_value(cfg, "speedups", v, sizeof v)) level = !strcmp(v, "safe") ? 0 : !strcmp(v, "full") ? 2 : 1;
+    if (cfg_value(cfg, "TOTK_SAFE_MODE", v, sizeof v) && v[0] == '0') level = 2;
     char kept[512] = "";
     int set = 0;
-    for (unsigned i = 0; i < sizeof k_safe / sizeof *k_safe; i++) {
-        if (cfg_names(cfg, k_safe[i][0]) || getenv(k_safe[i][0])) {
-            size_t l = strlen(kept);
-            snprintf(kept + l, sizeof kept - l, "%s%s", l ? ", " : "", k_safe[i][0]);
-            continue;
+    for (int group = 0; group < 3; group++) {
+        const char *const (*list)[2] = group == 0 ? k_always : group == 1 ? k_safe : k_balanced;
+        unsigned n = group == 0 ? sizeof k_always / sizeof *k_always : group == 1 ? sizeof k_safe / sizeof *k_safe
+                                                                                : sizeof k_balanced / sizeof *k_balanced;
+        if ((group == 1 && level > 0) || (group == 2 && level > 1)) continue;
+        for (unsigned i = 0; i < n; i++) {
+            if (cfg_names(cfg, list[i][0]) || getenv(list[i][0])) {
+                size_t l = strlen(kept);
+                snprintf(kept + l, sizeof kept - l, "%s%s", l ? ", " : "", list[i][0]);
+                continue;
+            }
+            setenv(list[i][0], list[i][1], 1), set++;
         }
-        setenv(k_safe[i][0], k_safe[i][1], 1), set++;
     }
-    fprintf(stderr, "[tsword] safe mode: %d settings at their plainest (TOTK_SAFE_MODE=0 in ultratears.cfg: off)%s%s\n", set,
-            kept[0] ? "; ultratears.cfg's own: " : "", kept);
+    static const char *const names[] = {"safe (every speed-up off)", "balanced (the graphics on their own threads)",
+                                        "full (UltraTears' own defaults)"};
+    fprintf(stderr, "[tsword] speed-ups: %s, %d settings set (speedups=safe|full in ultratears.cfg, or the menu)%s%s\n",
+            names[level], set, kept[0] ? "; ultratears.cfg's own: " : "", kept);
 }
 
 static void find_game_files(void) {
