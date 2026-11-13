@@ -219,9 +219,13 @@ static bool wp_on(void) {
         if (g_wp < 0) {
             const char *e = getenv("TOTK_WRITE_WATCH");
             g_nwchunks = g_backed ? ((g_hi - g_lo) >> WCHUNK_SHIFT) + 1 : 0;
-            g_wchunks = g_nwchunks && !(e && !strcmp(e, "0")) ? calloc(g_nwchunks, sizeof *g_wchunks) : NULL;
-            fprintf(stderr, "[ps5] write watch: %s\n", g_wchunks ? "on (page protection)" :
-                    e && !strcmp(e, "0") ? "off (TOTK_WRITE_WATCH=0): textures are compared by content" : "off (no memory)");
+            // (0.4.5) off unless TOTK_WRITE_WATCH=1: every run with it froze the console (the game stopped after its first
+            // frame, and the console when the title was closed - protection changes on memory the GPU has imported are
+            // the likeliest cause); without it textures are compared by content, as up to 0.4.0
+            bool want = e && !strcmp(e, "1");
+            g_wchunks = g_nwchunks && want ? calloc(g_nwchunks, sizeof *g_wchunks) : NULL;
+            fprintf(stderr, "[ps5] write watch: %s\n", g_wchunks ? "on (page protection, TOTK_WRITE_WATCH=1)" :
+                    !want ? "off: textures are compared by content (TOTK_WRITE_WATCH=1: on)" : "off (no memory)");
             atomic_store(&g_wp, g_wchunks != NULL);
         }
         pthread_mutex_unlock(&g_wp_lock);

@@ -13,6 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #include <SDL3/SDL.h>
 #include <ps5platform/exec.h>
@@ -69,6 +72,45 @@ static void use_game_dir(const char *dir) {
     if (!exists(TITLE_DIR "/tsgame.so") && exists(p)) snprintf(g_lib, sizeof g_lib, "%s", p);
 }
 
+// (0.4.5) A copy of ultratears.log beside the game files on the drive, brought up to date every second and flushed
+// to the drive: after a freeze the drive can go straight to a PC (the title folder's log needs the console up again).
+// TOTK_LOG_MIRROR=0: none.
+static char g_mirror_dst[640];
+static void *log_mirror_thread(void *unused) {
+    (void)unused;
+    off_t done = 0;
+    char buf[65536];
+    for (;;) {
+        int in = open(TITLE_DIR "/ultratears.log", O_RDONLY), out = open(g_mirror_dst, O_WRONLY | O_CREAT, 0644);
+        if (in >= 0 && out >= 0) {
+            ssize_t n;
+            bool wrote = false;
+            while ((n = pread(in, buf, sizeof buf, done)) > 0) {
+                if (pwrite(out, buf, (size_t)n, done) != n) break;
+                done += n, wrote = true;
+            }
+            if (wrote) fsync(out);
+        }
+        if (in >= 0) close(in);
+        if (out >= 0) close(out);
+        sleep(1);
+    }
+    return NULL;
+}
+static void log_mirror_start(const char *dir) {
+    const char *e = getenv("TOTK_LOG_MIRROR");
+    if (e && *e == '0') return;
+    char prev[660];
+    snprintf(g_mirror_dst, sizeof g_mirror_dst, "%s/ultratears.log", dir);
+    snprintf(prev, sizeof prev, "%s/ultratears-previous.log", dir);
+    rename(g_mirror_dst, prev);
+    pthread_t t;
+    if (pthread_create(&t, NULL, log_mirror_thread, NULL) == 0) {
+        pthread_detach(t);
+        fprintf(stderr, "[tsword] the log is copied to %s every second too (TOTK_LOG_MIRROR=0: not)\n", g_mirror_dst);
+    }
+}
+
 static void find_game_files(void) {
     // what stays in the title folder: the console's own compiled shaders (its driver's, not the PC's), the saves
     setenv("TOTK_SHADER_BIN", TITLE_DIR "/data/shaders/compiled-ps5.bin", 0);
@@ -106,6 +148,7 @@ static void find_game_files(void) {
             if (has_game(p)) {
                 use_game_dir(p);
                 fprintf(stderr, "[tsword] game files: %s (an external drive)\n", p);
+                log_mirror_start(p);
                 return;
             }
         }
