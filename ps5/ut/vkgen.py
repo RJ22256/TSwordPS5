@@ -5,7 +5,8 @@ The runtime calls Vulkan's commands by name, as it does against the PC's loader;
 RADV linked into the title, which exports nothing but vk_icdGetInstanceProcAddr. This writes a definition of every
 command in vulkan_core.h that resolves the driver's own entry point on its first call:
   global commands      vk_icdGetInstanceProcAddr(NULL, name)
-  instance commands    vk_icdGetInstanceProcAddr(instance, name), the instance vkCreateInstance made
+  instance commands    vk_icdGetInstanceProcAddr(instance, name), the instance vkCreateInstance made (or, made by the
+                       runtime through the driver's own entry point, the first instance a call names)
   device commands      vkGetDeviceProcAddr(device, name) once vkCreateDevice made one (the driver's entry points, no
                        trampoline), through the instance before that
 A command the driver doesn't have stops the runtime with its name in the log rather than jumping to null.
@@ -67,6 +68,10 @@ def main():
             device_ptrs.append(ptr)
         lines.append(f"static PFN_{name} {ptr};")
         body = [f"    if (!{ptr}) {ptr} = (PFN_{name})resolve(\"{name}\", {kind});"]
+        if kind == 1 and first == "VkInstance":
+            # (UltraTears makes its instance through the driver's own vkGetInstanceProcAddr, not through these: the
+            # instance a call names is the one to resolve with - the PS5 surface code's vkEnumeratePhysicalDevices)
+            body.insert(0, f"    if (!g_instance && {plist.split(',')[0].split()[-1]}) g_instance = {plist.split(',')[0].split()[-1]};")
         call = f"{ptr}({args})"
         if name == "vkCreateInstance":
             body.append(f"    VkResult r = {call};")
