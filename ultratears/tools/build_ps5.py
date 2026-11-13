@@ -58,6 +58,45 @@ def text_digest(p):
     return hashlib.sha256(pathlib.Path(p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
 
 
+# (TSword PS5 0.5.2) The PC's profile of the game's code (UltraTears' pgo/, tools/build_game.py: how often each lifted
+# function ran and which way its branches went, counted in a 20-minute training run; no bytes of the game) used for the
+# console's game code too: clang lays out and inlines by it, no result changes (on the Steam Deck the game's work a
+# frame 23-24.6 -> 21-22.6 ms). The lifter names the PS5's functions by the PC's layout (tools/lifter/gen.py fname), so
+# the profile's names match. Its format is the game folder's clang's (setup.py built the PC game with it); a clang that
+# cannot read it, or a Python without compression.zstd, builds without it, said so. TOTK_PGO=0: without.
+PGO_NAME = 'totk-1.4.3.profdata.zst'
+PGO_FLAGS = ['-mllvm', '-pgo-cold-func-opt=default', '-mllvm', '-profile-guided-section-prefix=false']
+
+
+def pgo_flags(game, build, clang, env):
+    if os.environ.get('TOTK_PGO') == '0':
+        print('build_ps5: the PC\'s profile of the game code: off (TOTK_PGO=0)', flush=True)
+        return []
+    src = next((d / 'pgo' / PGO_NAME for d in (ROOT, game) if (d / 'pgo' / PGO_NAME).is_file()), None)
+    if not src:
+        print('build_ps5: no pgo/' + PGO_NAME + ': the game code without the PC\'s profile', flush=True)
+        return []
+    try:
+        from compression import zstd
+    except ImportError:
+        print('build_ps5: this Python cannot unpack the profile (no compression.zstd): without it', flush=True)
+        return []
+    data = zstd.decompress(src.read_bytes())
+    prof = build / 'pgo.profdata'
+    if not prof.is_file() or prof.read_bytes() != data:
+        prof.write_bytes(data)
+    flags = [f'-fprofile-use={prof.as_posix()}', *PGO_FLAGS]
+    probe = build / 'pgo_probe.c'
+    probe.write_text('int pgo_probe(int x) { return x + 1; }\n')
+    r = subprocess.run([str(clang), *TARGET_FLAGS, '-O2', *flags, '-c', str(probe), '-o', str(build / 'pgo_probe.o')],
+                       env=env, capture_output=True, text=True)
+    if r.returncode:
+        print(f'build_ps5: this clang cannot read the PC\'s profile ({r.stderr.strip()[:200]}): without it', flush=True)
+        return []
+    print('build_ps5: the game code optimized by the PC\'s profile (pgo/' + PGO_NAME + ')', flush=True)
+    return flags
+
+
 def gamecode_id(root=ROOT):
     """What the title and the library must agree on: the lifter, the runtime headers the lifted C includes, the flags."""
     root = pathlib.Path(root)
@@ -283,8 +322,9 @@ def main():
     build.mkdir(exist_ok=True)
     (build / 'id.c').write_text(f'__attribute__((visibility("default"))) const char tsword_gamecode_id[] = "{gid}";\n')
     inc = f'-isystem {q((kit / "include").as_posix())} -I {q((ROOT / "src/runtime").as_posix())}'
+    pgo = ' '.join(q(f) for f in pgo_flags(game, build, clang, env))
     lines = ['# Written by tools/build_ps5.py; do not edit.', f'builddir = {p(build)}', f'cc = {q(clang.as_posix())}',
-             f'ld = {q(lld.as_posix())}', f'flags = {" ".join(TARGET_FLAGS)} {" ".join(GAME_FLAGS)} {inc}',
+             f'ld = {q(lld.as_posix())}', f'flags = {" ".join(TARGET_FLAGS)} {" ".join(GAME_FLAGS)} {pgo} {inc}',
              f'ldflags = {" ".join(LINK_FLAGS)}', '',
              'rule cc', '  command = $cc $flags -MD -MF $out.d -c $in -o $out', '  deps = gcc', '  depfile = $out.d',
              '  description = CC $in', '',

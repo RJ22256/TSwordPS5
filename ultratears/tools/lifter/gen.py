@@ -45,12 +45,21 @@ def sext26(w):
     return v - 0x04000000 if v & 0x02000000 else v
 
 
+# (TSword PS5) Named by the PC's layout wherever the code is lifted to (tools/lifter/bases.py): the PS5's lifted
+# functions carry the PC's names, so the PC's profile of the game's code (pgo/, tools/build_game.py) finds them
+# (ps5/ut-overlay/tools/build_ps5.py). The PC's own names are unchanged.
+try:
+    from bases import MAIN as _MAIN, PC_MAIN as _PC_MAIN
+except ImportError:
+    _MAIN = _PC_MAIN = 0
+
+
 def fname(a):
-    return f'f_{a:x}'
+    return f'f_{a - _MAIN + _PC_MAIN:x}'
 
 
 def fbname(a):
-    return f'fb_{a:x}'
+    return f'fb_{a - _MAIN + _PC_MAIN:x}'
 
 
 def sanitize(sym):

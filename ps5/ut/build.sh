@@ -92,6 +92,8 @@ cp "$u/tools/build_ps5.py" "$u/tools/gen_game.py" "$u/tools/progress.py" "$exp/t
 cp -R "$u/tools/lifter" "$exp/tools/" && rm -rf "$exp/tools/lifter/__pycache__"
 cp "$u"/src/runtime/*.h "$exp/src/runtime/"
 cp "$u/SOURCE" "$u/LICENSE" "$exp/"
+# (0.5.2) the PC's profile of the game code (no bytes of the game): the export optimizes the console's game code by it
+mkdir -p "$exp/pgo" && cp "$u/pgo/totk-1.4.3.profdata.zst" "$exp/pgo/"
 cp "$ps5/ut/export/README.txt" "$ps5/ut/export/Export for PS5.bat" "$exp/"
 cp -R "$dry/include" "$exp/kit/include"
 cp "$out/exports.txt" "$exp/kit/exports.txt"

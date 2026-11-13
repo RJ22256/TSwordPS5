@@ -12,6 +12,8 @@ This folder turns your UltraTears game folder on your PC into the TSword folder 
    USB drive). It translates the game's code again for the PS5's addresses (data\generated-ps5 in your UltraTears
    folder, 10-30 minutes the first time), compiles it into tsgame.so (with UltraTears' own clang), and copies the game
    data beside it. Your UltraTears install is not changed apart from data\generated-ps5 and build-ps5\ being added.
+   The game code is optimized with UltraTears' profile of it (pgo\, as the PC game is built): "optimized by the
+   PC's profile" in the window.
 2. Plug the drive into the PS5 and start TSword. It finds TSword\ on the drive by itself (or put the folder's path
    on the first line of game-files.txt in the title folder).
 

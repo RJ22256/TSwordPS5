@@ -5,7 +5,7 @@ fails loudly instead of changing the wrong code. Runtime switches live in src/gf
 """
 
 
-from bases import BASES, MAIN as _MAIN, pc   # (TSword PS5: the bases the code is lifted to)
+from bases import BASES, MAIN as _MAIN, PC_MAIN as _PC_MAIN, pc   # (TSword PS5: the bases the code is lifted to)
 
 
 def expect(gen, addr, word, what):
@@ -204,8 +204,9 @@ def cooldown(gen, addr):   # movi v1.2s, #0x34, lsl #24 (FLT_EPSILON) -> movi v1
 def zstd_call(word, target, host):
     def f(gen, addr):
         expect(gen, addr, word, 'zstd call')
-        return (f'{{ extern int totk_zstd_native(void); extern void {host}(Cpu *c); extern void f_{target:x}(Cpu *c); '
-                f'c->x[30] = {addr + 4:#x}ull; if (totk_zstd_native()) {host}(c); else f_{target:x}(c); }}')
+        name = f'f_{target - _MAIN + _PC_MAIN:x}'   # (gen.py fname: the PC's name)
+        return (f'{{ extern int totk_zstd_native(void); extern void {host}(Cpu *c); extern void {name}(Cpu *c); '
+                f'c->x[30] = {addr + 4:#x}ull; if (totk_zstd_native()) {host}(c); else {name}(c); }}')
     return f
 
 
