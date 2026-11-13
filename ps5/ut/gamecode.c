@@ -161,6 +161,10 @@ static void safe_mode(void) {
 static void find_game_files(void) {
     // what stays in the title folder: the console's own compiled shaders (its driver's, not the PC's), the saves
     setenv("TOTK_SHADER_BIN", TITLE_DIR "/data/shaders/compiled-ps5.bin", 0);
+    // (0.4.9) its folder made first: without it the binaries could not be written ("cannot write ...: shaders are
+    // compiled every run"), so every start compiled the game's thousands of startup shaders again
+    mkdir(TITLE_DIR "/data", 0755);
+    mkdir(TITLE_DIR "/data/shaders", 0755);
     setenv("TOTK_PROFILE_DIR", TITLE_DIR "/userdata", 0);
     FILE *f = fopen(TITLE_DIR "/game-files.txt", "r");
     if (f) {
