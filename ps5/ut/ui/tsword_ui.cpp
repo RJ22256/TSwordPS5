@@ -124,7 +124,14 @@ void setting_store(int which, int v) {
         g_overlay_mode = v;
         totk_cfg_set("fps_overlay", "");   // (the old 5x7 counter's switch: the overlay replaces it)
     }
-    if (which == S_FG) g_fg_mode = v;
+    if (which == S_FG) {
+        g_fg_mode = v;
+        // (0.5.4) frame generation wants the game held to half the TV's 60: at 30 its frames come evenly and the made
+        // ones fall between them (a steady 60 on the TV); at a limit the game cannot hold (40-55 in heavy places)
+        // they come unevenly, more than the TV shows, and the picture judders. So turning it on sets 30, at the next
+        // start (the frame rate row and tile show it; another limit can be chosen again).
+        if (v && g_set[S_FPS].cur != 0) setting_store(S_FPS, 0);
+    }
     LOG("%s=%s%s\n", s.key, s.opts[v].value, s.live ? "" : " (at the next start)");
 }
 
