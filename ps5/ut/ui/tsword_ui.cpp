@@ -124,14 +124,7 @@ void setting_store(int which, int v) {
         g_overlay_mode = v;
         totk_cfg_set("fps_overlay", "");   // (the old 5x7 counter's switch: the overlay replaces it)
     }
-    if (which == S_FG) {
-        g_fg_mode = v;
-        // (0.5.4) frame generation wants the game held to half the TV's 60: at 30 its frames come evenly and the made
-        // ones fall between them (a steady 60 on the TV); at a limit the game cannot hold (40-55 in heavy places)
-        // they come unevenly, more than the TV shows, and the picture judders. So turning it on sets 30, at the next
-        // start (the frame rate row and tile show it; another limit can be chosen again).
-        if (v && g_set[S_FPS].cur != 0) setting_store(S_FPS, 0);
-    }
+    if (which == S_FG) g_fg_mode = v;
     LOG("%s=%s%s\n", s.key, s.opts[v].value, s.live ? "" : " (at the next start)");
 }
 
@@ -644,7 +637,8 @@ void page_performance(float rs) {
     const char *why = tsword_fg_status ? tsword_fg_status() : NULL;
     fg_desc = fg_available()
         ? "Frames made between the game's (Lossless Scaling's frame generation, with your own Lossless.dll): 2x, 3x or 4x "
-          "the frames on the TV, the game's own a frame later. 3x and 4x want a 120 Hz TV. Applies at once."
+          "the frames on the TV, the game's own a frame later. Made frames are cleaner the higher the game's own rate: "
+          "best on a 120 Hz TV with the game at 40 (3x) or 60 (2x); from 30 fast motion ghosts. Applies at once."
         : "Frames made between the game's, with your own Lossless.dll (from Lossless Scaling, on Steam): copy it to the "
           "title folder's lsfg/Lossless.dll.";
     if (why) fg_desc += std::string(" Stopped: ") + why;
