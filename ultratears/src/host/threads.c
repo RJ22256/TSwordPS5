@@ -169,6 +169,9 @@ static int os_times(unsigned long tid, uint64_t *run, uint64_t *delay) {
 }
 #endif
 static thr_t *g_all;
+#ifdef __PROSPERO__
+static void stall_watch_start(void);   // (runtime_dump_threads, below)
+#endif
 static thr_t *g_main_thr;   // the guest main thread (svc_thread_main_init): its share of a long frame
 
 #define MAX_H 4096
@@ -313,9 +316,17 @@ void rt_svc(Cpu *c, uint32_t imm, uint64_t pc);
 static int ap_on(void) {
     if (g_ap >= 0) return g_ap;
     const char *e = getenv("TOTK_ASYNC_PREEMPT");
+#ifdef __PROSPERO__
+    // (TSword PS5 0.4.6) off unless TOTK_ASYNC_PREEMPT=1: its signals interrupt game threads wherever they are, system
+    // calls included, and every run with it stopped the game after its first frame with the console's picture frozen
+    // (2026-11-13, 0.4.2 to 0.4.5). WSword has none. Without it a thread gives its core up at its next SVC or call.
+    int on = e && !strcmp(e, "1") && cores_enabled() && !getenv("TOTK_NO_PREEMPT");
+    const char *why = on ? NULL : "off on the PS5 (TOTK_ASYNC_PREEMPT=1: on)";
+#else
     int on = !(e && !strcmp(e, "0")) && cores_enabled() && !getenv("TOTK_NO_PREEMPT");
-    uintptr_t lo = 0, hi = 0;
     const char *why = on ? NULL : "off";
+#endif
+    uintptr_t lo = 0, hi = 0;
     if (on && !rt_lifted_range(&lo, &hi)) on = 0, why = "no lifted code range";
     const uintptr_t host[] = {(uintptr_t)runtime_ap_stub, (uintptr_t)runtime_core_checkpoint, (uintptr_t)rt_svc,
                               (uintptr_t)rt_dispatch, (uintptr_t)guest_call};
@@ -965,6 +976,9 @@ uint32_t svc_thread_main_init(void) {
     g_lock(); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; g_main_thr = t; core_take(t); g_unlock();
     t_self = t;
     preempt_point_set(t);
+#ifdef __PROSPERO__
+    stall_watch_start();
+#endif
     return t->handle;
 }
 
@@ -1320,4 +1334,59 @@ void runtime_event_signal(uint32_t hw) {
 // ---------- Diagnostics ----------
 // MacNativeGames dumps every guest thread's wait state and guest return chain through Mach APIs (TOTK_DUMP_AFTER).
 // TODO(port): a Windows version for hang diagnosis.
+#ifdef __PROSPERO__
+// (TSword PS5 0.4.6) The console's version, for a game that stops: every guest thread - its priority, the virtual core
+// it holds, what it waits for, its last SVC and the game function it last called from - and the cores' owners. Read
+// with the global lock when it can be had in a second, else without it (the lock may be what everything waits on).
+void runtime_dump_threads(void) {
+    int locked = 0;
+    for (int i = 0; i < 100 && !(locked = pthread_mutex_trylock(&G) == 0); i++) usleep(10000);
+    static const char *const kinds[] = {"running / ready", "a mutex", "a condition", "an address", "sync objects"};
+    fprintf(stderr, "[stall] guest threads%s; cores:", locked ? "" : " (the global lock is held: read without it)");
+    for (int c = 0; c < NCORE; c++) fprintf(stderr, " %d=%#x", c, g_core_owner[c] ? g_core_owner[c]->handle : 0);
+    fprintf(stderr, "\n");
+    uint64_t now = now_ns();
+    int n = 0;
+    for (thr_t *t = g_all; t && n < 96; t = t->all, n++) {
+        if (t->exited) continue;
+        uint64_t off = 0;
+        const char *fn = t->last_lr ? loader_symbol_at(t->last_lr - 4, &off) : NULL;
+        fprintf(stderr, "[stall]   %#x prio %d core %d%s: waits for %s", t->handle, t->prio, t->cur_core,
+                t->preempt ? " (a better thread wants its core)" : "", t->wkind >= 0 && t->wkind < 5 ? kinds[t->wkind] : "?");
+        if (t->wkind == 1 || t->wkind == 3) fprintf(stderr, " %#llx", (unsigned long long)t->waddr);
+        if (t->wkind == 4) for (int i = 0; i < t->nwh && i < 4; i++) fprintf(stderr, " %#x", t->wh[i]);
+        if (t->core_t0) fprintf(stderr, ", for a core since %.1f s", (now - t->core_t0) / 1e9);
+        fprintf(stderr, "; last SVC %#x, %llu SVCs; from %s+%#llx (lr %#llx)\n", t->last_svc, (unsigned long long)t->nsvc,
+                fn ? fn : "?", (unsigned long long)off, (unsigned long long)t->last_lr);
+    }
+    if (locked) pthread_mutex_unlock(&G);
+    ap_report();
+}
+// Watches the game's frames from its first one on: none for 10 s, and the threads are dumped (again each minute).
+static void *stall_watch(void *unused) {
+    (void)unused;
+    uint64_t dm_nvn_frame_count(void);
+    uint64_t last = 0, same = 0, next_dump = 10;
+    for (;;) {
+        sleep(1);
+        uint64_t f = dm_nvn_frame_count();
+        if (!f) continue;
+        if (f != last) { last = f, same = 0, next_dump = 10; continue; }
+        if (++same == next_dump) {
+            fprintf(stderr, "[stall] the game has made no frame for %llu s (frame %llu): what its threads are doing\n",
+                    (unsigned long long)same, (unsigned long long)f);
+            runtime_dump_threads();
+            next_dump += 60;
+        }
+    }
+    return NULL;
+}
+static void stall_watch_start(void) {
+    static int started;
+    if (started++) return;
+    pthread_t t;
+    if (!pthread_create(&t, NULL, stall_watch, NULL)) pthread_detach(t);
+}
+#else
 void runtime_dump_threads(void) { LOG("thread dump not ported yet"); }
+#endif
