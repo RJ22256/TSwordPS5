@@ -853,8 +853,14 @@ static unsigned write_file(uint64_t h, int64_t offset, const void *buffer, uint6
     if ((uint64_t)offset + size > (uint64_t)st.st_size && !(mode & OPEN_APPEND)) return R_APPEND_REQUIRED;
     if (f->save) save_touched();
     uint64_t done = 0, t0 = runtime_now_ns();
+    // (TSword PS5 0.4.18) the game's buffer backed before the kernel reads it, as for reads into game memory above:
+    // on the console a kernel access to guest memory the game has not touched yet is not a fault but EFAULT (the save
+    // at the start of the game: "save write ... failed: errno 14", 2026-11-13)
+    guest_prepare_write((void *)(uintptr_t)buffer, size);
+    int tries = 0;
     while (done < size) {
         ssize_t n = pwrite(fd, (const uint8_t *)buffer + done, (size_t)(size - done), offset + (off_t)done);
+        if (n < 0 && errno == EFAULT && tries++ < 8) { guest_prepare_write((uint8_t *)(uintptr_t)buffer + done, size - done); continue; }
         if (n <= 0) {
             fprintf(stderr, "[totk] save write at %#llx (%#llx bytes from %p) failed: errno %d\n",
                     (unsigned long long)(offset + (off_t)done), (unsigned long long)(size - done),
