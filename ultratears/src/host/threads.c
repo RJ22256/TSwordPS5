@@ -1383,6 +1383,7 @@ void runtime_dump_threads(void) {
         if (t->core_t0) fprintf(stderr, ", for a core since %.1f s", (now - t->core_t0) / 1e9);
         fprintf(stderr, "; last SVC %#x, %llu SVCs; from %s+%#llx (lr %#llx)\n", t->last_svc, (unsigned long long)t->nsvc,
                 fn ? fn : "?", (unsigned long long)off, (unsigned long long)t->last_lr);
+        if (hf) { void plat_thread_stack(pthread_t pt); plat_thread_stack(t->pt); }   // (0.4.14) where in the host call
     }
     if (locked) pthread_mutex_unlock(&G);
     ap_report();

@@ -2,3 +2,4 @@
 #define mc_rsp gregs[REG_RSP]
 #define mc_err gregs[REG_ERR]
 #include <sys/ucontext.h>
+#define mc_rbp gregs[REG_RBP]

@@ -665,6 +665,49 @@ void plat_print_backtrace(void) {
     }
 }
 
+// (0.4.14) The stall report: another thread's stack. One signal; its handler walks its own frame pointers from the
+// interrupted registers and prints them, then the asker goes on (it waits at most half a second).
+static _Atomic int g_stack_done;
+static void stack_handler(int sig, siginfo_t *si, void *ctx) {
+    (void)sig, (void)si;
+    ucontext_t *uc = ctx;
+    uint64_t pc = (uint64_t)uc->uc_mcontext.mc_rip, off = 0;
+    const char *s = plat_symbol(pc, &off);
+    if (!s) s = rt_host_fn_name(pc, &off);
+    fprintf(stderr, "[stall]     at %016llx %s+%llx\n", (unsigned long long)pc, s ? s : "?", (unsigned long long)off);
+    uint64_t *fp = (uint64_t *)(uintptr_t)uc->uc_mcontext.mc_rbp;
+    for (int i = 0; i < 24 && fp && ((uintptr_t)fp & 7) == 0; i++) {
+        uint64_t ret = fp[1];
+        if (!ret) break;
+        off = 0;
+        s = plat_symbol(ret, &off);
+        if (!s) s = rt_host_fn_name(ret, &off);
+        fprintf(stderr, "[stall]     from %016llx %s+%llx\n", (unsigned long long)ret, s ? s : "?", (unsigned long long)off);
+        uint64_t *next = (uint64_t *)(uintptr_t)fp[0];
+        if (next <= fp) break;
+        fp = next;
+    }
+    atomic_store(&g_stack_done, 1);
+}
+void plat_thread_stack(pthread_t t) {
+    static int installed;
+    if (!installed) {
+        uint64_t off;
+        (void)plat_symbol(0, &off);   // the symbols loaded here, not in the handler
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = stack_handler;
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        if (sigaction(SIGUSR2, &sa, NULL)) return;
+        installed = 1;
+    }
+    atomic_store(&g_stack_done, 0);
+    if (pthread_kill(t, SIGUSR2)) { fprintf(stderr, "[stall]     (its stack could not be read)\n"); return; }
+    for (int i = 0; i < 50 && !atomic_load(&g_stack_done); i++) usleep(10000);
+    if (!atomic_load(&g_stack_done)) fprintf(stderr, "[stall]     (it did not answer in half a second)\n");
+}
+
 static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     ucontext_t *uc = ctx;
     static volatile int depth;
