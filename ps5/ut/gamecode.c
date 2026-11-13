@@ -116,7 +116,9 @@ static void log_mirror_start(const char *dir) {
 // and risky path at its plainest; ultratears.cfg can set any of them otherwise (a line naming it wins), and
 // TOTK_SAFE_MODE=0 there leaves them all at UltraTears' own defaults.
 static const char *const k_safe[][2] = {
-    {"TOTK_FREE_CORES", "1"},          // no virtual cores: game threads are ordinary threads (no core hand-overs)
+    // (0.4.17) not TOTK_FREE_CORES any more: the virtual cores give the game its three cores, one thread on each at a
+    // time; without them dozens of threads ran at once under the same core numbers and corrupted the game's per-core
+    // heap data (0.4.15 / 0.4.16 crashed in the same allocator function, f_1800082e00, whatever the pools were)
     {"TOTK_ASYNC_REPLAY", "0"},        // graphics replayed on the game's thread, no translation thread
     {"TOTK_VK_RECORD_THREADS", "1"},   // one recording thread
     {"TOTK_VK_PARTIAL_SUBMIT", "0"},   // each submission in one call
