@@ -26,6 +26,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __PROSPERO__
+#include <unistd.h>
+#endif
 
 #include "compat/gfx_compat.h"
 #include "host/hle.h"
@@ -185,6 +188,13 @@ void vkb_shbin_put(const char *key, const vkb_shbin_variant *v, const void *data
             fflush(g_f) == 0) {
             s->off = g_end + RECORD; s->size = n; s->state = 1;
             g_end += RECORD + size;
+#ifdef __PROSPERO__
+            // (TSword PS5 0.4.8) onto the drive every 2 s: a console reset by its power button otherwise loses the
+            // binaries the run made, and the next run compiles them all again
+            static uint64_t synced;
+            uint64_t now = runtime_now_ns();
+            if (now - synced > 2000000000ull) synced = now, fsync(fileno(g_f));
+#endif
             g_records++;
             g_bytes += size;
         } else if (s->state == 0) memset(s, 0, sizeof *s);

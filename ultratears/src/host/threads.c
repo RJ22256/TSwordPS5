@@ -1364,6 +1364,8 @@ void runtime_dump_threads(void) {
     }
     if (locked) pthread_mutex_unlock(&G);
     ap_report();
+    void vkb_shader_progress_line(int force);
+    vkb_shader_progress_line(1);   // (0.4.8) a first frame that is compiling its shaders is not stuck
 }
 // Watches the game's frames from its first one on: none for 10 s, and the threads are dumped (again each minute).
 static void *stall_watch(void *unused) {

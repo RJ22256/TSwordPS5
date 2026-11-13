@@ -295,6 +295,8 @@ static void *present_thread(void *unused) {
     uint64_t shown = 0;
     unsigned slot = 0;
     int last = -1;   // the output image shown last (the game frame repeated under the text field)
+    int pulse = 0;          // (PS5) show the cycling colour once: no game frame for a second before the first frames
+    uint64_t pulses = 1000; // (its colour step, apart from the frame count)
     int text_entry_visible(void);   // host/text_entry.c
     for (;;) {
         pthread_mutex_lock(&mu);
@@ -302,6 +304,18 @@ static void *present_thread(void *unused) {
         while (frames_in == shown && !again) {
             /* While the software keyboard's field is open the game may draw nothing (the thread that asked for it waits):
                the last frame is shown again with the field over it every 33 ms, so typing shows. */
+#ifdef __PROSPERO__
+            /* (TSword PS5 0.4.8) Before the game's first frames have come, a wait of over a second shows the slowly
+               cycling colour again: the first frames compile their shaders (minutes on a console without its saved
+               binaries yet), and a still black screen looked like a freeze. */
+            if ((!text_entry_visible() || last < 0) && frames_in < 10) {
+                struct timespec dl;
+                clock_gettime(CLOCK_REALTIME, &dl);
+                dl.tv_sec += 1;
+                if (pthread_cond_timedwait(&cv, &mu, &dl) == ETIMEDOUT && frames_in == shown) { pulse = 1; break; }
+                continue;
+            }
+#endif
             if (!text_entry_visible() || last < 0) { pthread_cond_wait(&cv, &mu); continue; }
             struct timespec dl;
             clock_gettime(CLOCK_REALTIME, &dl);
@@ -310,6 +324,12 @@ static void *present_thread(void *unused) {
             if (pthread_cond_timedwait(&cv, &mu, &dl) == ETIMEDOUT && frames_in == shown && g_out[last].state == 0) again = 1;
         }
         int pick = -1;
+        if (pulse) {   // (PS5) the cycling colour, the game frame stays where it is
+            pthread_mutex_unlock(&mu);
+            pulse = 0;
+            if (present_one(pulses += 20, slot, NULL)) slot = (slot + 1) % FRAMES;
+            continue;
+        }
         if (again) pick = last;
         else {
             shown = frames_in;   // frames that came while the last one was shown are skipped: only the newest counts

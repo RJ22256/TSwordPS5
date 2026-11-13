@@ -327,6 +327,21 @@ static size_t drop_cull_distance(uint32_t *w, size_t n) {
 // ---- shader objects: from the driver's binary on disk when there is one (vkb_shbin.c), else compiled from SPIR-V
 // and its binary kept
 static _Atomic uint64_t g_from_bin, g_from_spv, g_bin_refused, g_obj_live, g_obj_destroyed;
+#ifdef __PROSPERO__
+static _Atomic uint64_t g_compiling_since, g_spv_ns, g_spv_max_ns, g_progress_at;
+static char g_compiling_key[17];
+// One line every 2 s while shaders are being compiled (and from the stall report, any time)
+void vkb_shader_progress_line(int force) {
+    uint64_t now = runtime_now_ns(), at = atomic_load(&g_progress_at), since = atomic_load(&g_compiling_since);
+    if (!force && (now - at < 2000000000ull || !atomic_compare_exchange_strong(&g_progress_at, &at, now))) return;
+    uint64_t n = atomic_load(&g_from_spv);
+    VLOG("shaders: %llu compiled by the driver this run (%.1f s in all, the longest %.1f s), %llu from saved binaries%s%s%s",
+         (unsigned long long)n, atomic_load(&g_spv_ns) / 1e9, atomic_load(&g_spv_max_ns) / 1e9,
+         (unsigned long long)atomic_load(&g_from_bin), since ? "; compiling " : "", since ? g_compiling_key : "",
+         since ? (now - since > 1000000000ull ? " now (over a second)" : " now") : "");
+}
+static void shader_progress(uint64_t dt, int force) { (void)dt; vkb_shader_progress_line(force); }
+#endif
 static VkResult make_object(const char *key, const vkb_shbin_variant *v, VkShaderStageFlagBits stage, const uint32_t *spv,
                             size_t bytes, VkShaderEXT *obj) {
     VkDescriptorSetLayout layouts[2];
@@ -351,7 +366,22 @@ static VkResult make_object(const char *key, const vkb_shbin_variant *v, VkShade
         vkb_shbin_drop(key, v);   // refused (VK_INCOMPATIBLE_SHADER_BINARY_EXT): compiled again below and kept anew
         atomic_fetch_add(&g_bin_refused, 1);
     }
+#ifdef __PROSPERO__
+    // (TSword PS5 0.4.8) the console has no compiled binaries until it has made them: the first frames compile every
+    // shader they draw with, and nothing said so - a long black screen looked like a freeze. The log says how far it is.
+    uint64_t c0 = runtime_now_ns();
+    atomic_store(&g_compiling_since, c0);
+    if (key) { strncpy(g_compiling_key, key, 16); g_compiling_key[16] = 0; }
     VkResult r = vk.vkCreateShadersEXT(vkc.device, 1, &ci, NULL, obj);
+    atomic_store(&g_compiling_since, 0);
+    uint64_t dt = runtime_now_ns() - c0;
+    atomic_fetch_add(&g_spv_ns, dt);
+    if (dt > atomic_load(&g_spv_max_ns)) atomic_store(&g_spv_max_ns, dt);
+    if (dt > 2000000000ull) VLOG("shader %.16s: the driver took %.1f s to compile it", key ? key : "?", dt / 1e9);
+    if (r == VK_SUCCESS) shader_progress(dt, 0);
+#else
+    VkResult r = vk.vkCreateShadersEXT(vkc.device, 1, &ci, NULL, obj);
+#endif
     if (r != VK_SUCCESS) return r;
     atomic_fetch_add(&g_from_spv, 1);
     atomic_fetch_add(&g_obj_live, 1);
