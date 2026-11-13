@@ -529,8 +529,21 @@ void plat_thread_boost(void) {}
 void plat_thread_background(void) {}
 void plat_thread_nice(int n) { (void)n; }
 
+// The time-constraint threads of the PC (macOS's real-time policy: the game's main thread at its acquire, the
+// translation thread). Off on the console unless TOTK_PS5_REALTIME=1: as SCHED_FIFO the game's main thread froze the
+// whole console twice right after it was set (2026-11-13, 0.4.2 and 0.4.3: the line just before both freezes) - a
+// FIFO thread spinning on a lock never lets the lock's owner on its core run. WSword runs at normal priority.
 void plat_thread_realtime(uint64_t period_ns) {
     (void)period_ns;
+    static _Atomic int on = -1;
+    if (on < 0) {
+        const char *e = getenv("TOTK_PS5_REALTIME");
+        int v = e && *e == '1';
+        int was = -1;
+        if (atomic_compare_exchange_strong(&on, &was, v))
+            fprintf(stderr, "[ps5] real-time threads: %s\n", v ? "on (TOTK_PS5_REALTIME=1)" : "off, normal priority (TOTK_PS5_REALTIME=1: on)");
+    }
+    if (!on) return;
     struct sched_param sp = {.sched_priority = 1};
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);   // (refused quietly where a title may not)
 }
