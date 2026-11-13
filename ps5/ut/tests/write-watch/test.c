@@ -39,6 +39,7 @@ static void *writer(void *arg) {
     return NULL;
 }
 int main(int argc, char **argv) {
+    setenv("TOTK_WRITE_WATCH", "1", 1);   // (off by default on the console since 0.4.5: the test is of the watch itself)
     int threads = argc > 1 ? atoi(argv[1]) : 6, looks = argc > 2 ? atoi(argv[2]) : 3000;
     if (!plat_reserve_guest(GUEST_LO, GUEST_HI)) { puts("reserve failed"); return 1; }
     plat_crash_handler_install();

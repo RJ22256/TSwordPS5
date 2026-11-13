@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include "platform.h"
 #include "rt.h"
 #include "ps5platform/kernel.h"
@@ -10,6 +11,7 @@ static int look(uint64_t a, uint64_t n, const char *what) {
     return k;
 }
 int main(void) {
+    setenv("TOTK_WRITE_WATCH", "1", 1);   // (off by default on the console since 0.4.5)
     plat_reserve_guest(GUEST_LO, GUEST_HI);
     plat_crash_handler_install();
     plat_commit(POOL, 1 << 20);
