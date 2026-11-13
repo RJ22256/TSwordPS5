@@ -89,6 +89,40 @@ def main():
         o = f"{out}/obj/ps5/{os.path.splitext(s_)[0]}.o"
         objs.append(o)
         n.append(f"build {o}: cc {P}/{s_}\n  flags = {fl}\n")
+    # (TSword PS5) the console menu and the performance overlay (ps5/ut/ui, Dear ImGui in ps5/third_party/imgui): C++,
+    # drawn by the present thread (src/vk/present.c tsword_ui_record). Not in the game code's import table (exports.py):
+    # the game code calls none of it.
+    im = os.path.join(ROOT, "ps5", "third_party", "imgui")
+    ui_flags = (f"-std=c++17 -O2 -g -march=znver2 -fno-omit-frame-pointer -fno-exceptions -fno-rtti -Wall "
+                f"-Wno-unknown-warning-option -I{deps}/include -I{im} -I{im}/backends -I{U}/src/vk -I{P}/ui "
+                f"-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES -DIMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS")
+    ui_objs = []
+    for src in [f"{P}/ui/tsword_ui.cpp", f"{P}/ui/option_rows.cpp", f"{im}/imgui.cpp", f"{im}/imgui_draw.cpp",
+                f"{im}/imgui_tables.cpp", f"{im}/imgui_widgets.cpp", f"{im}/backends/imgui_impl_vulkan.cpp"]:
+        o = f"{out}/obj/ps5/ui/{os.path.splitext(os.path.basename(src))[0]}.o"
+        ui_objs.append(o)
+        fl = ui_flags if "/ps5/ut/" in src else ui_flags.replace(" -Wall", " -w")
+        n.append(f"build {o}: cxx {src}\n  flags = {fl}\n")
+    # frame generation (ps5/ut/ui/framegen.c, lsfg.cpp; ps5/third_party/lsfg-vk, GPL-3.0: its README.TSword.md), with
+    # C++ exceptions as lsfg-vk is written; lsfg_prefix.h first (FreeBSD's major() / minor() macros)
+    lsfg = os.path.join(ROOT, "ps5", "third_party", "lsfg-vk")
+    lsfg_common = (f"-O2 -g -march=znver2 -fno-omit-frame-pointer -std=c++20 -fexceptions -frtti -include {P}/ui/lsfg_prefix.h "
+                   f"-I{deps}/include -I{lsfg}/lsfg-vk-common/include -I{lsfg}/lsfg-vk-backend/include")
+    o = f"{out}/obj/ps5/ui/framegen.o"
+    ui_objs.append(o)
+    n.append(f"build {o}: cc {P}/ui/framegen.c\n  flags = -std=gnu17 -O2 -g -march=znver2 -fno-omit-frame-pointer -Wall "
+             f"-I{deps}/include -I{U}/src/vk -I{P}/ui\n")
+    o = f"{out}/obj/ps5/ui/lsfg.o"
+    ui_objs.append(o)
+    n.append(f"build {o}: cxx {P}/ui/lsfg.cpp\n  flags = {lsfg_common} -Wall\n")
+    for d in ("lsfg-vk-common/src", "lsfg-vk-backend/src"):
+        for dp, _, fs in sorted(os.walk(os.path.join(lsfg, d))):
+            for f in sorted(fs):
+                if f.endswith(".cpp"):
+                    src = os.path.join(dp, f)
+                    o = f"{out}/obj/ps5/lsfg/{os.path.relpath(src, lsfg)[:-4]}.o"
+                    ui_objs.append(o)
+                    n.append(f"build {o}: cxx {src}\n  flags = {lsfg_common} -DVK_NO_PROTOTYPES -I{lsfg}/lsfg-vk-backend/src -w\n")
     vkc = f"{out}/gen/vk_dispatch.c"
     n.append(f"rule vkgen\n  command = {sys.executable} {P}/vkgen.py $in $out\n  description = vkgen\n")
     n.append(f"build {vkc}: vkgen {deps}/include/vulkan/vulkan_core.h | {P}/vkgen.py\n")
@@ -101,13 +135,13 @@ def main():
     n.append(f"build {out}/gen/exports.c | {out}/exports.txt: exports {' '.join(objs)} | {P}/exports.py\n")
     n.append(f"build {out}/obj/ps5/exports.o: cc {out}/gen/exports.c\n  flags = -std=gnu17 -O2 -w\n")
     objs.append(f"{out}/obj/ps5/exports.o")
-    n.append(f"build {out}/libut.a: ar {' '.join(objs)}\n")
+    n.append(f"build {out}/libut.a: ar {' '.join(objs + ui_objs)}\n")
     n.append(f"default {out}/libut.a\n")
     with open(os.path.join(out, "build.ninja"), "w") as f:
         f.write("\n".join(n))
     with open(os.path.join(out, "gamecode.id"), "w") as f:
         f.write(gid + "\n")
-    print(f"configure: {len(objs)} objects -> {out}/libut.a (UltraTears {commit[:12]}), game code id {gid}")
+    print(f"configure: {len(objs) + len(ui_objs)} objects -> {out}/libut.a (UltraTears {commit[:12]}), game code id {gid}")
     return 0
 
 

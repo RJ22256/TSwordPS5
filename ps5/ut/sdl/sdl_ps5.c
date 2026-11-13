@@ -793,20 +793,41 @@ void ps5_pad_swipes(bool on) {
     g_swipe_on = on;
     pthread_mutex_unlock(&g_pad_lock);
 }
-static void touch_sample(const uint8_t t[24], uint64_t ts_us) {
+// (TSword PS5) A two-finger tap - two fingers rested on the touch pad without clicking it and lifted within half a
+// second, hardly moved - opens or closes TSword's menu (ps5/ut/ui/tsword_ui.cpp), as WSword PS5's
+void tsword_ui_tap(void);
+void tsword_ui_pad(uint32_t held, int16_t lx, int16_t ly);
+int tsword_ui_captures(void);
+static void touch_sample(const uint8_t t[24], uint64_t ts_us, bool clicked) {
     static bool down;
-    static int x0, y0, x1, y1;
+    static int x0, y0, x1, y1, most;
+    static int f2x0, f2y0, f2x1, f2y1;  // (the second finger, from when it came)
+    static bool second, pressed;
     static uint64_t t0;
     int n = t[0];
     int x = t[8] | t[9] << 8, y = t[10] | t[11] << 8;
-    if (n > 0 && !down) down = true, x0 = x1 = x, y0 = y1 = y, t0 = ts_us;
-    else if (n > 0) x1 = x, y1 = y;
-    else if (down) {
+    int x2 = t[16] | t[17] << 8, y2 = t[18] | t[19] << 8;
+    if (n > 0 && !down) {
+        down = true, x0 = x1 = x, y0 = y1 = y, t0 = ts_us, most = n, pressed = clicked, second = false;
+    } else if (n > 0) {
+        x1 = x, y1 = y;
+    }
+    if (n > 0) {
+        if (n > most) most = n;
+        pressed |= clicked;
+        if (n >= 2 && !second) second = true, f2x0 = f2x1 = x2, f2y0 = f2y1 = y2;
+        else if (n >= 2) f2x1 = x2, f2y1 = y2;
+    } else if (down) {
         down = false;
         int dx = x1 - x0, dy = y1 - y0;
-        if (g_swipe_on && ts_us - t0 < 700000 && abs(dx) > 450 && abs(dx) > 2 * abs(dy)) {
+        if (g_swipe_on && most == 1 && !tsword_ui_captures() && ts_us - t0 < 700000 && abs(dx) > 450 && abs(dx) > 2 * abs(dy)) {
             g_swipe_held = 1u << (dx > 0 ? SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER : SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
             g_swipe_until = ticks_ns() + 60000000u;
+        }
+        int moved = abs(dx) + abs(dy), moved2 = second ? abs(f2x1 - f2x0) + abs(f2y1 - f2y0) : 0;
+        if (most == 2 && second && !pressed && ts_us - t0 < 500000 && moved < 160 && moved2 < 160) {
+            fprintf(stderr, "[ps5] touch pad: two-finger tap (the TSword menu)\n");
+            tsword_ui_tap();
         }
     }
 }
@@ -858,6 +879,19 @@ static void pad_read_locked(uint64_t now) {
             axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = trigger(s[i].l2);
             axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = trigger(s[i].r2);
         }
+        /* (TSword PS5) While TSword's menu is open it has the controller: the game sees it at rest. When the menu
+           closes, what is still held from it stays hidden from the game until it is let go (the Cross that chose
+           Resume is no press in the game). */
+        static uint32_t ui_mask;
+        if (ours) tsword_ui_pad(held, axes[SDL_GAMEPAD_AXIS_LEFTX], axes[SDL_GAMEPAD_AXIS_LEFTY]);
+        if (tsword_ui_captures()) {
+            ui_mask = held;
+            held = 0;
+            memset(axes, 0, sizeof axes);
+        } else if (ui_mask) {
+            ui_mask &= held;
+            held &= ~ui_mask;
+        }
         uint32_t changed = held ^ g_held;
         for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++)
             if (changed >> b & 1) {
@@ -871,7 +905,7 @@ static void pad_read_locked(uint64_t now) {
                                          .value = axes[a]}};
                 push(&e);
             }
-        if (ours) touch_sample(s[i].touch, s[i].timestamp_us);
+        if (ours) touch_sample(s[i].touch, s[i].timestamp_us, (s[i].buttons & PS_TOUCH_PAD) != 0);
         held |= g_swipe_held;
         g_held = held;
         memcpy(g_axes, axes, sizeof axes);

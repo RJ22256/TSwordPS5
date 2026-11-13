@@ -39,6 +39,12 @@ int totk_sarc_member(const uint8_t *d, size_t n, const char *name, size_t *lo, s
 /* ---- the controls (as window_sdl.c binds_load reads them) */
 static int xbox_layout(void) { const char *v = getenv("TOTK_BIND_pad_layout"); return v && !strcmp(v, "xbox"); }
 static int on_deck(void) { const char *v = getenv("SteamDeck"); return v && !strcmp(v, "1"); }
+/* (TSword PS5) the DualSense: its shoulders and triggers named as on it (L1 / L2...), as the Deck's */
+#ifdef __PROSPERO__
+static int on_dualsense(void) { return 1; }
+#else
+static int on_dualsense(void) { return 0; }
+#endif
 /* the first SDL gamepad name bound to the Switch action (pad_<id>), else the layout's default */
 static void bound(const char *id, const char *dflt, char *out, size_t cap) {
     char var[48];
@@ -76,6 +82,13 @@ static const char *input_label(const char *n) {
     int x = xbox_layout(), deck = on_deck(), p = place_of(n);
     static const char *const L[4] = {"A", "B", "X", "Y"};
     if (p >= 0) return L[letter_at(p)];
+    if (on_dualsense()) {   /* (sdl_ps5.c: the touch pad's click is back, Options start) */
+        if (!strcmp(n, "back")) return "Touch";
+        if (!strcmp(n, "start")) return "Options";
+        if (!strcmp(n, "leftstick")) return "L3";
+        if (!strcmp(n, "rightstick")) return "R3";
+        deck = 1;
+    }
     if (!strcmp(n, "leftshoulder")) return deck ? "L1" : x ? "LB" : "L";
     if (!strcmp(n, "rightshoulder")) return deck ? "R1" : x ? "RB" : "R";
     if (!strcmp(n, "lefttrigger")) return deck ? "L2" : x ? "LT" : "ZL";

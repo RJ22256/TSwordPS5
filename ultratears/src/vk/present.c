@@ -41,6 +41,23 @@ static uint64_t frames_in;           // under mu
 static _Atomic uint64_t presented;
 static _Atomic int resized;
 
+#ifdef __PROSPERO__
+/* (TSword PS5) The console menu and the performance overlay (ps5/ut/ui/tsword_ui.cpp: Dear ImGui), drawn over the TV's
+   picture after the game's frame; weak, so the PC's links go without them. */
+__attribute__((weak)) void tsword_ui_record(VkCommandBuffer cb, VkImage img, VkFormat fmt, VkExtent2D ext, int fresh,
+                                            uint32_t src_w, uint32_t src_h);
+__attribute__((weak)) int tsword_ui_animating(void);
+__attribute__((weak)) void tsword_ui_swapchain_gone(void);
+static int ui_animating(void) { return tsword_ui_animating && tsword_ui_animating(); }
+/* (TSword PS5) frame generation (ps5/ut/ui/framegen.c, Lossless Scaling's with the player's Lossless.dll): the frames
+   to show before a new game frame, made between it and the one before */
+typedef struct { VkImage img; uint32_t w, h; VkSemaphore timeline; uint64_t value; } tsword_fg_image;
+__attribute__((weak)) int tsword_fg_frame(VkImage src, uint32_t src_w, uint32_t src_h, const int crop[4], VkSemaphore wait_sem,
+                                          uint64_t wait_value, tsword_fg_image *out);
+#else
+static int ui_animating(void) { return 0; }
+#endif
+
 // Command buffers and sync objects of the present thread (the device is vk.c's).
 static int create_present_objects(void) {
     VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -58,6 +75,9 @@ static int create_present_objects(void) {
 }
 
 static void destroy_swapchain(void) {
+#ifdef __PROSPERO__
+    if (tsword_ui_swapchain_gone) tsword_ui_swapchain_gone();   // (its views of the images)
+#endif
     for (uint32_t i = 0; i < nimages; i++) vk.vkDestroySemaphore(vkc.device, render_done[i], NULL);
     if (swapchain) vk.vkDestroySwapchainKHR(vkc.device, swapchain, NULL);
     swapchain = VK_NULL_HANDLE;
@@ -214,7 +234,7 @@ void vkp_out_ready(int slot, VkSemaphore timeline, uint64_t value, const int cro
 }
 
 // One window frame: the newest game frame (out, may be NULL: the cycling colour) fitted with its aspect ratio.
-static int present_one(uint64_t n, unsigned slot, out_t *out) {
+static int present_one(uint64_t n, unsigned slot, out_t *out, int fresh) {
     if (atomic_exchange(&resized, 0) || !swapchain) {
         vk.vkWaitForFences(vkc.device, FRAMES, in_flight, VK_TRUE, UINT64_MAX);   // the present thread's own work only
         destroy_swapchain();
@@ -256,10 +276,18 @@ static int present_one(uint64_t n, unsigned slot, out_t *out) {
         }
         void vk_overlay_frame(void);
         void vk_overlay_record(VkCommandBuffer cb, VkImage dst, VkExtent2D ext, VkFormat fmt, unsigned slot);
-        vk_overlay_frame();   // the frame counter (overlay.c, F10)
-        vk_overlay_record(cb, images[idx], extent, format, slot);
+#ifdef __PROSPERO__
+        if (!tsword_ui_record)   // (TSword PS5: its performance overlay in place of the frame counter)
+#endif
+        {
+            vk_overlay_frame();   // the frame counter (overlay.c, F10)
+            vk_overlay_record(cb, images[idx], extent, format, slot);
+        }
         void vk_text_panel_record(VkCommandBuffer cb, VkImage dst, VkExtent2D ext, VkFormat fmt, unsigned slot);
         vk_text_panel_record(cb, images[idx], extent, format, slot);   // the software keyboard's field (host/text_entry.c)
+#ifdef __PROSPERO__
+        if (tsword_ui_record) tsword_ui_record(cb, images[idx], format, extent, fresh, (uint32_t)sw, (uint32_t)sh);
+#endif
     }
     barrier(cb, images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -308,7 +336,7 @@ static void *present_thread(void *unused) {
             /* (TSword PS5 0.4.8) Before the game's first frames have come, a wait of over a second shows the slowly
                cycling colour again: the first frames compile their shaders (minutes on a console without its saved
                binaries yet), and a still black screen looked like a freeze. */
-            if ((!text_entry_visible() || last < 0) && frames_in < 10) {
+            if ((!(text_entry_visible() || ui_animating()) || last < 0) && frames_in < 10) {
                 struct timespec dl;
                 clock_gettime(CLOCK_REALTIME, &dl);
                 dl.tv_sec += 1;
@@ -316,7 +344,8 @@ static void *present_thread(void *unused) {
                 continue;
             }
 #endif
-            if (!text_entry_visible() || last < 0) { pthread_cond_wait(&cv, &mu); continue; }
+            /* (TSword PS5) the same while its menu is open: the menu moves even when the game shows nothing new */
+            if (!(text_entry_visible() || ui_animating()) || last < 0) { pthread_cond_wait(&cv, &mu); continue; }
             struct timespec dl;
             clock_gettime(CLOCK_REALTIME, &dl);
             dl.tv_nsec += 33000000;
@@ -327,7 +356,7 @@ static void *present_thread(void *unused) {
         if (pulse) {   // (PS5) the cycling colour, the game frame stays where it is
             pthread_mutex_unlock(&mu);
             pulse = 0;
-            if (present_one(pulses += 20, slot, NULL)) slot = (slot + 1) % FRAMES;
+            if (present_one(pulses += 20, slot, NULL, 0)) slot = (slot + 1) % FRAMES;
             continue;
         }
         if (again) pick = last;
@@ -346,7 +375,29 @@ static void *present_thread(void *unused) {
             uint64_t at = g_out[pick].not_before, now = runtime_now_ns();
             if (at > now && at - now < 500000000ull) plat_sleep_until_ns(at);
         }
-        if (present_one(shown, slot, pick >= 0 ? &g_out[pick] : NULL)) slot = (slot + 1) % FRAMES;
+#ifdef __PROSPERO__
+        /* (TSword PS5) Frame generation: the frames made between the last game frame and this one first, then this
+           one, spread evenly over the time between the game's frames (its average) */
+        static uint64_t last_real_ns, period_ns;
+        if (pick >= 0 && !again && tsword_fg_frame) {
+            uint64_t now = runtime_now_ns();
+            if (last_real_ns && now - last_real_ns < 200000000ull)
+                period_ns = period_ns ? (period_ns * 7 + (now - last_real_ns)) / 8 : now - last_real_ns;
+            last_real_ns = now;
+            tsword_fg_image fg[4];
+            out_t *o = &g_out[pick];
+            int made = tsword_fg_frame(o->img, o->w, o->h, o->crop, o->timeline, o->value, fg);
+            uint64_t step = made > 0 && period_ns ? period_ns / (uint64_t)(made + 1) : 0;
+            if (step > 50000000ull) step = 50000000ull;   // (a pause: no long waits)
+            for (int i = 0; i < made; i++) {
+                out_t g = {.img = fg[i].img, .w = fg[i].w, .h = fg[i].h, .timeline = fg[i].timeline, .value = fg[i].value};
+                if (i) plat_sleep_until_ns(now + step * (uint64_t)i);
+                if (present_one(shown, slot, &g, 0)) slot = (slot + 1) % FRAMES;
+            }
+            if (made > 0) plat_sleep_until_ns(now + step * (uint64_t)made);
+        }
+#endif
+        if (present_one(shown, slot, pick >= 0 ? &g_out[pick] : NULL, !again)) slot = (slot + 1) % FRAMES;
         if (pick >= 0) {
             pthread_mutex_lock(&mu);
             g_out[pick].state = 0;
