@@ -22,7 +22,14 @@ int vkb_db_on(void) {
     static int v = -1;
     if (v < 0) {
         const char *e = getenv("TOTK_VK_DESCRIPTOR_SETS");
+#ifdef __PROSPERO__
+        // (TSword PS5) descriptor sets unless TOTK_VK_DESCRIPTOR_SETS=0: the console's RADV has run WSword on sets for
+        // months; its descriptor buffers had never drawn a frame, and the first run froze the console at the first
+        // frames (2026-11-13). Same picture either way.
+        v = vkc.has_descriptor_buffer && e && *e == '0';
+#else
         v = vkc.has_descriptor_buffer && !(e && *e && *e != '0');
+#endif
         VLOG("descriptors: %s", v ? "descriptor buffers" : "descriptor sets");
     }
     return v;

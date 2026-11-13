@@ -11,6 +11,10 @@
 #ifndef _WIN32
 #define _GNU_SOURCE   // sched_getaffinity
 #include <sched.h>
+#ifdef __PROSPERO__
+#include <time.h>
+#include <unistd.h>
+#endif
 #endif
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -1784,7 +1788,47 @@ static void *retire_thread(void *unused) {
         pthread_mutex_unlock(&g_mu);
         VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1, .pSemaphores = &g_timeline,
                                   .pValues = &j->fence};
+#ifdef __PROSPERO__
+        // (TSword PS5) a GPU that never finishes a submission takes the whole console with it (2026-11-13: the screen
+        // froze, the power button held to the third beep). Waited for in 1 s steps: at 3 s it is logged, at 8 s the
+        // title ends itself, the log first, while the console may still recover. TOTK_GPU_WATCHDOG=0: wait forever.
+        static int wd = -1;
+        if (wd < 0) { const char *e = getenv("TOTK_GPU_WATCHDOG"); wd = !(e && *e == '0'); }
+        VkResult r;
+        for (int waited = 0;; waited++) {
+            r = vk.vkWaitSemaphores(vkc.device, &wi, wd ? 1000000000ull : UINT64_MAX);
+            if (r != VK_TIMEOUT) break;
+            uint64_t at = 0;
+            vk.vkGetSemaphoreCounterValue(vkc.device, g_timeline, &at);
+            if (waited + 1 == 3)
+                VLOG("GPU: submission %llu (present %llu) still running after 3 s; the GPU has finished up to %llu",
+                     (unsigned long long)j->fence, (unsigned long long)j->frame, (unsigned long long)at);
+            if (waited + 1 >= 8) {
+                VLOG("GPU hang: submission %llu (present %llu) didn't finish in 8 s (finished up to %llu); the title ends "
+                     "itself before the console locks up (TOTK_GPU_WATCHDOG=0: wait)", (unsigned long long)j->fence,
+                     (unsigned long long)j->frame, (unsigned long long)at);
+                checkpoint_report();
+                LOG("FATAL: the GPU stopped at submission %llu (present %llu): ultratears.log has the details",
+                    (unsigned long long)j->fence, (unsigned long long)j->frame);
+                fflush(NULL);
+                plat_fatal_notice();
+                _exit(2);   // (not exit(): its handlers would tear Vulkan down and wait on the stopped GPU)
+            }
+        }
+        {   // a heartbeat: how far the GPU has got, every 10 s (a freeze's log says whether frames were being made)
+            static uint64_t last_ns, subs;
+            subs++;
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+            if (subs <= 3 || now - last_ns >= 10000000000ull) {
+                last_ns = now;
+                VLOG("GPU: %llu submissions finished, present %llu", (unsigned long long)subs, (unsigned long long)j->frame);
+            }
+        }
+#else
         VkResult r = vk.vkWaitSemaphores(vkc.device, &wi, UINT64_MAX);
+#endif
         if (r != VK_SUCCESS) { vk_check(r, "vkWaitSemaphores"); checkpoint_report(); die("GPU submission %llu lost", (unsigned long long)j->fence); }
         if (totk_tl_on()) gpu_span(j->slot, j->fence);   // TOTK_TIMELINE: when the GPU ran this command buffer
         gpu_frame(j);
