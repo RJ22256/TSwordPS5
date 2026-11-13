@@ -126,6 +126,7 @@ typedef struct thr {
     // asynchronous preemption (below): this thread's host-call depth and Cpu (TLR), interruption state
     volatile int *depth; Cpu *cpu; int ap_ok, ap_pending; uint64_t ap_rip, ap_last;
     const char *volatile host_fn; volatile uint64_t host_t0;   // (0.4.12) the host call it is in, since when (stall report)
+    const char *volatile where; volatile uint64_t where_t0;    // (0.4.13) where in it (runtime_thread_where)
 #ifdef _WIN32
     HANDLE ap_h; CONTEXT *ap_ctx;
 #else
@@ -702,6 +703,15 @@ void runtime_thread_host(const char *name) {   // (runtime/dispatch.c) entering 
     if (!t) return;
     if (name) t->host_t0 = now_ns();
     t->host_fn = name;
+}
+// (0.4.13) where inside a host call this thread is (a wait, the driver's submit...): returns the previous place
+const char *runtime_thread_where(const char *what) {
+    thr_t *t = t_self;
+    if (!t) return NULL;
+    const char *prev = t->where;
+    t->where = what;
+    if (what) t->where_t0 = now_ns();
+    return prev;
 }
 void runtime_thread_note_hle(unsigned i) { thr_t *t = me_or_null(); if (t) t->last_hle = (int)i + 1; }   // hle_stack.c, while tracing
 uint32_t runtime_thread_current_handle(void) { thr_t *t = me_or_null(); return t ? t->handle : 0; }
@@ -1367,6 +1377,8 @@ void runtime_dump_threads(void) {
         if (t->wkind == 1) fprintf(stderr, " (held by %#x)", ld32(t->waddr) & ~WAITERS_BIT);
         const char *hf = t->host_fn;
         if (hf) fprintf(stderr, ", in the host call %s for %.1f s", hf, (now - t->host_t0) / 1e9);
+        const char *wh = t->where;
+        if (hf && wh) fprintf(stderr, " (at: %s, for %.1f s)", wh, (now - t->where_t0) / 1e9);
         if (t->wkind == 4) for (int i = 0; i < t->nwh && i < 4; i++) fprintf(stderr, " %#x", t->wh[i]);
         if (t->core_t0) fprintf(stderr, ", for a core since %.1f s", (now - t->core_t0) / 1e9);
         fprintf(stderr, "; last SVC %#x, %llu SVCs; from %s+%#llx (lr %#llx)\n", t->last_svc, (unsigned long long)t->nsvc,
@@ -1375,7 +1387,9 @@ void runtime_dump_threads(void) {
     if (locked) pthread_mutex_unlock(&G);
     ap_report();
     void vkb_shader_progress_line(int force);
-    vkb_shader_progress_line(1);   // (0.4.8) a first frame that is compiling its shaders is not stuck
+    vkb_shader_progress_line(1);
+    void vkb_gpu_state_line(void);   // (0.4.13) GPU submissions made, sent and finished
+    vkb_gpu_state_line();   // (0.4.8) a first frame that is compiling its shaders is not stuck
 }
 // Watches the game's frames from its first one on: none for 10 s, and the threads are dumped (again each minute).
 static void *stall_watch(void *unused) {

@@ -19,10 +19,16 @@ static inline void vkb_step_add(int kind, uint64_t t0) {
     atomic_fetch_add_explicit(&vkb_step_ns[kind], runtime_now_ns() - t0, memory_order_relaxed);
     atomic_fetch_add_explicit(&vkb_step_n[kind], 1, memory_order_relaxed);
 }
+// host/threads.c (0.4.13): where in a host call this thread is, for the stall report (absent from tools: nothing)
+__attribute__((weak)) const char *runtime_thread_where(const char *what);
+static inline const char *vkb_where(const char *what) { return runtime_thread_where ? runtime_thread_where(what) : NULL; }
 static inline void vkb_lock(pthread_mutex_t *m, int kind) {
     if (!pthread_mutex_trylock(m)) return;
     uint64_t t0 = runtime_now_ns();
+    static const char *const names[] = {"waiting for the texture registry's lock", "waiting for the images' lock", "waiting for the pools' lock"};
+    const char *wprev = vkb_where(kind >= 0 && kind < 3 ? names[kind] : "waiting for a replayer lock");
     pthread_mutex_lock(m);
+    vkb_where(wprev);
     atomic_fetch_add_explicit(&vkb_lock_wait_ns[kind], runtime_now_ns() - t0, memory_order_relaxed);
     atomic_fetch_add_explicit(&vkb_lock_waits[kind], 1, memory_order_relaxed);
 }

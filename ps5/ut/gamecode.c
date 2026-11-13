@@ -126,6 +126,7 @@ static const char *const k_safe[][2] = {
     {"TOTK_WB_FENCE", "0"},            // GPU-drawn images written back the plain way
     {"TOTK_POOL_EARLY_RELEASE", "0"},  // memory pools kept until the game releases them
     {"TOTK_VK_ROBUST", "2"},           // out-of-range GPU buffer reads give 0 instead of faulting
+    {"TOTK_VK_CHECKPOINTS", "1"},      // (0.4.13) GPU markers: a stop names the GPU commands it ran last
 };
 static bool cfg_names(const char *cfg, const char *key) {   // a line "KEY=..." (not a comment)
     size_t n = strlen(key);

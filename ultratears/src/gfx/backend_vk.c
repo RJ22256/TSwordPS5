@@ -43,6 +43,7 @@
 
 static _Atomic int g_ok = -1;   // -1 not initialised, 0 no Vulkan (null behaviour), 1 ready
 static VkSemaphore g_timeline;
+static _Atomic uint64_t g_in_submit, g_sent;   // (0.4.13) the stall report: inside the driver's submit, given to it
 static uint64_t g_fence;                 // last submitted (submit thread; read under g_mu by others)
 static uint64_t g_done;                  // last retired (under g_mu)
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -3247,9 +3248,15 @@ uint64_t mtl_sub_commit(void) {
     pc_sync(fence);   // pool copies: the CPU's writes into the pools this submission uses
     vkb_step_add(PK_SYNC, tps);
     uint64_t ts0 = runtime_now_ns();
+    const char *wprev = vkb_where("waiting for the GPU queue's lock");
     vk_queue_lock();
+    vkb_where("in the driver's vkQueueSubmit2");
+    atomic_store(&g_in_submit, fence);
     VkResult r = vk.vkQueueSubmit2(vkc.queue, 1, &si, VK_NULL_HANDLE);
+    atomic_store(&g_in_submit, 0);
+    atomic_store(&g_sent, fence);
     vk_queue_unlock();
+    vkb_where(wprev);
     vkb_step_add(PK_SUBMIT, ts0);
     if (r != VK_SUCCESS) { vk_check(r, "vkQueueSubmit2"); die("GPU submission failed"); }
     job *j = malloc(sizeof *j);
@@ -3838,9 +3845,12 @@ static void part_flush(void) {
     pc_sync(g_fence + 1);   // pool copies these chunks use (each pool once a submission)
     vkb_step_add(PK_SYNC, tps);
     uint64_t ts0 = runtime_now_ns();
+    const char *wprev = vkb_where("waiting for the GPU queue's lock (a part)");
     vk_queue_lock();
+    vkb_where("in the driver's vkQueueSubmit2 (a part)");
     VkResult r = vk.vkQueueSubmit2(vkc.queue, 1, &si, VK_NULL_HANDLE);
     vk_queue_unlock();
+    vkb_where(wprev);
     vkb_step_add(PK_SUBMIT, ts0);
     if (r != VK_SUCCESS) { vk_check(r, "vkQueueSubmit2 (part)"); die("GPU submission failed"); }
     if (first) g_part_first_ns += ts0 - g_part_t0;
@@ -4050,10 +4060,22 @@ void vkb_mt_submit(const uint64_t *h, int n) {   // after mtl_sub_begin and the 
 uint64_t mtl_last_fence(void) { return g_fence; }
 uint64_t mtl_done(void) { pthread_mutex_lock(&g_mu); uint64_t d = g_done; pthread_mutex_unlock(&g_mu); return d; }   // completed by the GPU
 
+// (0.4.13) the stall report: submissions made, sent to the driver and finished, and one inside the driver's submit
+void vkb_gpu_state_line(void) {
+    pthread_mutex_lock(&g_mu);
+    uint64_t done = g_done;
+    pthread_mutex_unlock(&g_mu);
+    uint64_t in = atomic_load(&g_in_submit);
+    VLOG("GPU submissions: %llu made, %llu given to the driver, %llu finished%s%s", (unsigned long long)g_fence,
+         (unsigned long long)atomic_load(&g_sent), (unsigned long long)done, in ? "; one is inside the driver's submit call: " : "",
+         in ? "it has not returned" : "");
+    checkpoint_report();   // (with gpu_marks=1: the GPU commands it ran last)
+}
 int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
     pthread_mutex_lock(&g_mu);
     if (g_done >= fence || !timeout_ns) { int ok = g_done >= fence; pthread_mutex_unlock(&g_mu); return ok; }
     uint64_t end = timeout_ns == UINT64_MAX ? UINT64_MAX : runtime_now_ns() + timeout_ns;
+    const char *wprev = vkb_where("waiting for a GPU submission to finish (mtl_wait)");
     while (g_done < fence) {
         uint64_t now = runtime_now_ns();
         if (now >= end) break;
@@ -4067,6 +4089,7 @@ int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
     }
     int ok = g_done >= fence;
     pthread_mutex_unlock(&g_mu);
+    vkb_where(wprev);
     return ok;
 }
 void mtl_finish(void) { mtl_wait(g_fence, UINT64_MAX); wb_held_take(0, 1); }   // everything done: the held copy backs too
