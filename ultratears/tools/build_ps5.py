@@ -47,7 +47,8 @@ TARGET_FLAGS = ['--target=x86_64-sie-ps5', '-fvisibility-nodllstorageclass=defau
                 '-femulated-tls', '-fdenormal-fp-math=ieee', '-fPIC', '-march=znver2', '-nostdlibinc']
 # build_game.py GAME_CFLAGS for the console: frame pointers kept (the console's crash logs walk them)
 GAME_FLAGS = ['-O2', '-g0', '-fno-strict-aliasing', '-fno-omit-frame-pointer', '-D_FILE_OFFSET_BITS=64', '-w']
-LINK_FLAGS = ['-shared', '-Bsymbolic', '--hash-style=both', '-z', 'noexecstack', '-z', 'max-page-size=0x4000',
+# -m elf_x86_64 first: MSYS2's ld.lld (UltraTears' deps/clang64 on Windows) links like MinGW unless told the target
+LINK_FLAGS = ['-m', 'elf_x86_64', '-shared', '-Bsymbolic', '--hash-style=both', '-z', 'noexecstack', '-z', 'max-page-size=0x4000',
               '--build-id=none']
 DATA = ['exefs', 'romfs', 'shaders/translated.pack', 'shaders/translated', 'textures', 'fonts']
 
