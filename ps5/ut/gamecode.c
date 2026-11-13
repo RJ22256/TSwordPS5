@@ -140,6 +140,7 @@ static const char *const k_safe[][2] = {
     {"TOTK_VK_RECORD_THREADS", "1"},   // one recording thread
     {"TOTK_VK_PARTIAL_SUBMIT", "0"},   // each submission in one call
     {"TOTK_VK_CHECKPOINTS", "1"},      // (0.4.13) GPU markers: a stop names the GPU commands it ran last
+    {"TOTK_PS5_PIN", "0"},             // (0.5.3) the scheduler's placement of threads on the CPUs
 };
 static const char *const k_balanced[][2] = {
     {"TOTK_VK_MEM_READY", "0"},        // no spare memory made ahead on its own thread

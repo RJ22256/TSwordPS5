@@ -639,7 +639,22 @@ static void ap_report(void) {
                 (unsigned long long)g_ap_fail);
 }
 
-static void core_take(thr_t *t) {   // holding G; waits until a core in t's mask is handed over
+static void core_take_wait(thr_t *t);
+#ifdef __PROSPERO__
+/* (TSword PS5 0.5.3) Each of the game's three cores on a physical core of its own - both its hardware threads - and
+   every other thread on the cores left (runtime/platform/ps5.c ps5_pin_core, WSword PS5's placement): left to the
+   scheduler, a recording thread or the shader compiler shared a physical core with the game's main thread, whose speed
+   sets the frame rate. A thread moves when it takes another core than the one it was last placed for. */
+void ps5_pin_core(int core);
+static __thread int t_pinned = -1;
+#endif
+static void core_take(thr_t *t) {   // holding G
+    core_take_wait(t);
+#ifdef __PROSPERO__
+    if (t == t_self && t->cur_core >= 0 && t->cur_core != t_pinned) t_pinned = t->cur_core, ps5_pin_core(t->cur_core);
+#endif
+}
+static void core_take_wait(thr_t *t) {   // holding G; waits until a core in t's mask is handed over
     if (!cores_enabled() || t->cur_core >= 0) return;
     if (!(t->mask & ((1u << NCORE) - 1))) die("thread %#x core mask %#llx has no application core", t->handle, (unsigned long long)t->mask);
     int c = t->core >= 0 && t->core < NCORE && core_allowed(t, t->core) && !g_core_owner[t->core] ? t->core : -1;

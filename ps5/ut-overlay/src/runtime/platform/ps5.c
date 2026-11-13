@@ -471,10 +471,53 @@ static void stack_give(void *base, size_t size) {
     pthread_mutex_unlock(&g_stack_lock);
 }
 
+// ---- CPU placement (TSword PS5 0.5.3, WSword PS5's): the game's three cores (host/threads.c, a game thread runs game
+// code only while it holds one) each on a physical core of its own - both its hardware threads - and every other
+// thread (the translation and recording threads, the present, audio, the shader compiler, RADV's) on the cores left.
+// TOTK_PS5_PIN=0 (ultratears.cfg; speed-ups=safe sets it): the scheduler's placement.
+int scePthreadSetaffinity(pthread_t, uint64_t);
+int scePthreadGetaffinity(pthread_t, uint64_t *);
+static uint64_t g_host_cpus, g_core_cpus[3];
+static int g_pin;
+
+static void cpu_placement(void) {
+    const char *e = getenv("TOTK_PS5_PIN");
+    uint64_t all = 0;
+    if (e && *e == '0') { fprintf(stderr, "[cpu] the scheduler's placement (TOTK_PS5_PIN=0)\n"); return; }
+    if (scePthreadGetaffinity(pthread_self(), &all) != 0 || !all) {
+        fprintf(stderr, "[cpu] the title's CPUs unknown: the scheduler's placement\n");
+        return;
+    }
+    int pairs[8], np = 0;
+    for (int c = 0; c < 64 && np < 8; c += 2)
+        if ((all >> c & 3) == 3) pairs[np++] = c;   // (a physical core: hardware threads 2n and 2n + 1)
+    if (np < 5) {   // (the game's three and at least two whole cores for the rest)
+        fprintf(stderr, "[cpu] %d CPUs (mask %llx), %d whole cores: the scheduler's placement\n", __builtin_popcountll(all),
+                (unsigned long long)all, np);
+        return;
+    }
+    // the game's cores on the last whole cores (the first ones carry the system's own work where it has any)
+    uint64_t guest = 0;
+    for (int i = 0; i < 3; i++) g_core_cpus[i] = 3ull << pairs[np - 3 + i], guest |= g_core_cpus[i];
+    g_host_cpus = all & ~guest;
+    g_pin = 1;
+    scePthreadSetaffinity(pthread_self(), g_host_cpus);
+    fprintf(stderr, "[cpu] %d CPUs (mask %llx): the game's cores 0-2 on CPUs %d-%d, %d-%d, %d-%d; every other thread on "
+            "mask %llx (TOTK_PS5_PIN=0: the scheduler's)\n", __builtin_popcountll(all), (unsigned long long)all,
+            pairs[np - 3], pairs[np - 3] + 1, pairs[np - 2], pairs[np - 2] + 1, pairs[np - 1], pairs[np - 1] + 1,
+            (unsigned long long)g_host_cpus);
+}
+
+// (host/threads.c core_take: a game thread holding that core, the first time since it held another)
+void ps5_pin_core(int core) {
+    if (g_pin && core >= 0 && core < 3) scePthreadSetaffinity(pthread_self(), g_core_cpus[core]);
+}
+
 typedef struct { void *(*fn)(void *); void *arg; void *stack; size_t size; } ThreadStart;
 static void *thread_start(void *p) {
     ThreadStart s = *(ThreadStart *)p;
     free(p);
+    if (g_pin) scePthreadSetaffinity(pthread_self(), g_host_cpus);   // (every thread begins on the host's CPUs)
     void *r = s.fn(s.arg);
     atomic_fetch_sub(&g_stacks_live, 1);
     stack_give(s.stack, s.size);   // (its reuse waits a second: this thread is still on it until it has ended)
@@ -582,6 +625,7 @@ void plat_debug_console(int debug) { (void)debug; }
 
 void plat_init(void) {
     fprintf(stderr, "[ps5] UltraTears for the PS5 (TSword PS5): log %s\n", g_log_path);
+    cpu_placement();
 }
 
 bool plat_exe_path(char *buf, size_t size) {

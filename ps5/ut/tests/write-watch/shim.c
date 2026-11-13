@@ -54,3 +54,6 @@ void tsword_fatal_notice(void) {}
 
 // (0.4.10) ps5.c drains the log writer (runtime/logcost.c) before a fatal notice; not linked into the test
 void runtime_log_drain(unsigned ms) { (void)ms; }
+// (0.5.3) ps5.c's CPU placement: the console's affinity calls (the test has nothing to place)
+int scePthreadSetaffinity(pthread_t t, uint64_t mask) { (void)t; (void)mask; return 0; }
+int scePthreadGetaffinity(pthread_t t, uint64_t *mask) { (void)t; *mask = 0; return -1; }
