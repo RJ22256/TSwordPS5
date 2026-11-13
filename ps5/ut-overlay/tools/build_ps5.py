@@ -80,6 +80,29 @@ def ut_version(root=ROOT):
         return t[1].lstrip('v') if len(t) > 1 else '?'
 
 
+def elf_undefined(path):
+    """The names an ELF shared object imports: its dynamic symbols without a section (read here: UltraTears' Windows
+    toolchain has no llvm-nm)."""
+    import struct
+    b = pathlib.Path(path).read_bytes()
+    if b[:4] != b'\x7fELF' or b[4] != 2:
+        sys.exit(f'build_ps5: {path} is not a 64-bit ELF file')
+    shoff, = struct.unpack_from('<Q', b, 0x28)
+    shentsize, shnum = struct.unpack_from('<HH', b, 0x3a)
+    secs = [struct.unpack_from('<IIQQQQIIQQ', b, shoff + i * shentsize) for i in range(shnum)]
+    names = set()
+    for sec in secs:
+        if sec[1] != 11:  # SHT_DYNSYM
+            continue
+        stroff = secs[sec[6]][4]
+        for o in range(sec[4], sec[4] + sec[5], 24):
+            st_name, st_info, st_other, st_shndx = struct.unpack_from('<IBBH', b, o)
+            if st_name and st_shndx == 0:
+                end = b.index(b'\0', stroff + st_name)
+                names.add(b[stroff + st_name:end].decode())
+    return sorted(names)
+
+
 def find_llvm(game):
     """clang, ld.lld, llvm-nm and ninja: the game folder's (tools/setup.py installs them), else ULTRS_CLANG64 /
     ULTRS_LLVM, else MSYS2's CLANG64, else this system's."""
@@ -87,7 +110,7 @@ def find_llvm(game):
     dirs = [game / 'deps/clang64/bin', game / 'deps/llvm/bin', os.environ.get('ULTRS_CLANG64'), os.environ.get('ULTRS_LLVM'),
             'C:/msys64/clang64/bin']
     for d in dirs:
-        if d and (pathlib.Path(d) / exe('clang')).is_file() and (pathlib.Path(d) / exe('ld.lld')).is_file():
+        if d and (pathlib.Path(d) / exe('clang')).is_file() and (pathlib.Path(d) / exe('ld.lld')).is_file():  # (no llvm-nm needed)
             d = pathlib.Path(d)
             ninja = d / exe('ninja')
             if not ninja.is_file():
@@ -282,8 +305,7 @@ def main():
     r = subprocess.run([str(ninja), '-C', str(build), '-j', str(a.cpus)], env=env)
     if r.returncode:
         sys.exit(r.returncode)
-    imp = subprocess.run([str(nm), '-D', '--undefined-only', str(lib)], capture_output=True, text=True, env=env)
-    imports = sorted({l.split()[-1] for l in imp.stdout.splitlines() if l.split()})
+    imports = elf_undefined(lib)
     have = set((kit / 'exports.txt').read_text().split())
     lack = [n for n in imports if n not in have]
     if lack:
