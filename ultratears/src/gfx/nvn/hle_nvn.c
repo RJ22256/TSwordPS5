@@ -2794,11 +2794,15 @@ static void ft_report(void) {
     if (g_ft.nwork) snprintf(work, sizeof work, "the game's work p50 %.1f / p90 %.1f / max %.1f ms, over 16.7 ms in %.0f%% of frames",
                              ft_pct(wk, g_ft.nwork, 50), ft_pct(wk, g_ft.nwork, 90), wk[g_ft.nwork - 1], 100.0 * g_ft.over / g_ft.nwork);
     if (g_ft.ngpu) snprintf(gpu, sizeof gpu, "GPU p50 %.1f / p90 %.1f ms", ft_pct(gp, g_ft.ngpu, 50), ft_pct(gp, g_ft.ngpu, 90));
+    static uint64_t yn0, yt0; uint64_t yn, yt; dm_main_yield_stats(&yn, &yt);   // the main thread's yields (polling its workers)
+    double ymsf = yt >= yt0 ? (yt - yt0) / 1e6 / (n + g_ft.skipped) : 0, ynf = yn >= yn0 ? (double)(yn - yn0) / (n + g_ft.skipped) : 0;
+    yn0 = yn; yt0 = yt;
     LOG("[frametime] gameplay, %u frames (%u menu / loading frames left out) in %.1f s: %.1f fps, frame on screen p50 %.1f / p90 %.1f / max %.1f ms; "
         "%s; held at 30 by the game in %.0f%% of frames; %s; game thread's graphics calls p50 %.1f ms; per frame: display-slot wait %.1f ms, "
-        "main thread on its core %.1f ms, waiting for a core %.1f ms, blocked %.1f ms",
+        "main thread on its core %.1f ms (yielding %.1f ms in %.0f yields), waiting for a core %.1f ms, blocked %.1f ms",
         n, g_ft.skipped, (now_ns() - g_ft.t0) / 1e9, sum > 0 ? n * 1000.0 / sum : 0, ft_pct(fr, n, 50), ft_pct(fr, n, 90), fr[n - 1],
-        work, 100.0 * g_ft.held / n, gpu, ft_pct(nv, n, 50), g_ft.slot / n, g_ft.on_core / n, g_ft.core_wait / n, g_ft.blocked / n);
+        work, 100.0 * g_ft.held / n, gpu, ft_pct(nv, n, 50), g_ft.slot / n, g_ft.on_core / n, ymsf, ynf, g_ft.core_wait / n, g_ft.blocked / n);
+    { void nvn_prof_report(unsigned frames); nvn_prof_report(n + g_ft.skipped); }   // (nvn_registry.c, TOTK_NVN_PROF=1)
     uint64_t t = now_ns();
     unsigned char play[LFN]; uint64_t playf[LFN]; memcpy(play, g_ft.play, sizeof play); memcpy(playf, g_ft.playf, sizeof playf);
     memset(&g_ft, 0, sizeof g_ft); g_ft.t0 = t;

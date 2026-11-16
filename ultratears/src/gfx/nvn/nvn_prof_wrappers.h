@@ -1,0 +1,508 @@
+// Generated for nvn_registry.c's graphics-call profile (TSword, TOTK_NVN_PROF): one wrapper per thunk slot. Do not edit.
+#define NVN_PROF_SLOTS 448
+static void P0(Cpu *c) { prof_call(0, c); }
+static void P1(Cpu *c) { prof_call(1, c); }
+static void P2(Cpu *c) { prof_call(2, c); }
+static void P3(Cpu *c) { prof_call(3, c); }
+static void P4(Cpu *c) { prof_call(4, c); }
+static void P5(Cpu *c) { prof_call(5, c); }
+static void P6(Cpu *c) { prof_call(6, c); }
+static void P7(Cpu *c) { prof_call(7, c); }
+static void P8(Cpu *c) { prof_call(8, c); }
+static void P9(Cpu *c) { prof_call(9, c); }
+static void P10(Cpu *c) { prof_call(10, c); }
+static void P11(Cpu *c) { prof_call(11, c); }
+static void P12(Cpu *c) { prof_call(12, c); }
+static void P13(Cpu *c) { prof_call(13, c); }
+static void P14(Cpu *c) { prof_call(14, c); }
+static void P15(Cpu *c) { prof_call(15, c); }
+static void P16(Cpu *c) { prof_call(16, c); }
+static void P17(Cpu *c) { prof_call(17, c); }
+static void P18(Cpu *c) { prof_call(18, c); }
+static void P19(Cpu *c) { prof_call(19, c); }
+static void P20(Cpu *c) { prof_call(20, c); }
+static void P21(Cpu *c) { prof_call(21, c); }
+static void P22(Cpu *c) { prof_call(22, c); }
+static void P23(Cpu *c) { prof_call(23, c); }
+static void P24(Cpu *c) { prof_call(24, c); }
+static void P25(Cpu *c) { prof_call(25, c); }
+static void P26(Cpu *c) { prof_call(26, c); }
+static void P27(Cpu *c) { prof_call(27, c); }
+static void P28(Cpu *c) { prof_call(28, c); }
+static void P29(Cpu *c) { prof_call(29, c); }
+static void P30(Cpu *c) { prof_call(30, c); }
+static void P31(Cpu *c) { prof_call(31, c); }
+static void P32(Cpu *c) { prof_call(32, c); }
+static void P33(Cpu *c) { prof_call(33, c); }
+static void P34(Cpu *c) { prof_call(34, c); }
+static void P35(Cpu *c) { prof_call(35, c); }
+static void P36(Cpu *c) { prof_call(36, c); }
+static void P37(Cpu *c) { prof_call(37, c); }
+static void P38(Cpu *c) { prof_call(38, c); }
+static void P39(Cpu *c) { prof_call(39, c); }
+static void P40(Cpu *c) { prof_call(40, c); }
+static void P41(Cpu *c) { prof_call(41, c); }
+static void P42(Cpu *c) { prof_call(42, c); }
+static void P43(Cpu *c) { prof_call(43, c); }
+static void P44(Cpu *c) { prof_call(44, c); }
+static void P45(Cpu *c) { prof_call(45, c); }
+static void P46(Cpu *c) { prof_call(46, c); }
+static void P47(Cpu *c) { prof_call(47, c); }
+static void P48(Cpu *c) { prof_call(48, c); }
+static void P49(Cpu *c) { prof_call(49, c); }
+static void P50(Cpu *c) { prof_call(50, c); }
+static void P51(Cpu *c) { prof_call(51, c); }
+static void P52(Cpu *c) { prof_call(52, c); }
+static void P53(Cpu *c) { prof_call(53, c); }
+static void P54(Cpu *c) { prof_call(54, c); }
+static void P55(Cpu *c) { prof_call(55, c); }
+static void P56(Cpu *c) { prof_call(56, c); }
+static void P57(Cpu *c) { prof_call(57, c); }
+static void P58(Cpu *c) { prof_call(58, c); }
+static void P59(Cpu *c) { prof_call(59, c); }
+static void P60(Cpu *c) { prof_call(60, c); }
+static void P61(Cpu *c) { prof_call(61, c); }
+static void P62(Cpu *c) { prof_call(62, c); }
+static void P63(Cpu *c) { prof_call(63, c); }
+static void P64(Cpu *c) { prof_call(64, c); }
+static void P65(Cpu *c) { prof_call(65, c); }
+static void P66(Cpu *c) { prof_call(66, c); }
+static void P67(Cpu *c) { prof_call(67, c); }
+static void P68(Cpu *c) { prof_call(68, c); }
+static void P69(Cpu *c) { prof_call(69, c); }
+static void P70(Cpu *c) { prof_call(70, c); }
+static void P71(Cpu *c) { prof_call(71, c); }
+static void P72(Cpu *c) { prof_call(72, c); }
+static void P73(Cpu *c) { prof_call(73, c); }
+static void P74(Cpu *c) { prof_call(74, c); }
+static void P75(Cpu *c) { prof_call(75, c); }
+static void P76(Cpu *c) { prof_call(76, c); }
+static void P77(Cpu *c) { prof_call(77, c); }
+static void P78(Cpu *c) { prof_call(78, c); }
+static void P79(Cpu *c) { prof_call(79, c); }
+static void P80(Cpu *c) { prof_call(80, c); }
+static void P81(Cpu *c) { prof_call(81, c); }
+static void P82(Cpu *c) { prof_call(82, c); }
+static void P83(Cpu *c) { prof_call(83, c); }
+static void P84(Cpu *c) { prof_call(84, c); }
+static void P85(Cpu *c) { prof_call(85, c); }
+static void P86(Cpu *c) { prof_call(86, c); }
+static void P87(Cpu *c) { prof_call(87, c); }
+static void P88(Cpu *c) { prof_call(88, c); }
+static void P89(Cpu *c) { prof_call(89, c); }
+static void P90(Cpu *c) { prof_call(90, c); }
+static void P91(Cpu *c) { prof_call(91, c); }
+static void P92(Cpu *c) { prof_call(92, c); }
+static void P93(Cpu *c) { prof_call(93, c); }
+static void P94(Cpu *c) { prof_call(94, c); }
+static void P95(Cpu *c) { prof_call(95, c); }
+static void P96(Cpu *c) { prof_call(96, c); }
+static void P97(Cpu *c) { prof_call(97, c); }
+static void P98(Cpu *c) { prof_call(98, c); }
+static void P99(Cpu *c) { prof_call(99, c); }
+static void P100(Cpu *c) { prof_call(100, c); }
+static void P101(Cpu *c) { prof_call(101, c); }
+static void P102(Cpu *c) { prof_call(102, c); }
+static void P103(Cpu *c) { prof_call(103, c); }
+static void P104(Cpu *c) { prof_call(104, c); }
+static void P105(Cpu *c) { prof_call(105, c); }
+static void P106(Cpu *c) { prof_call(106, c); }
+static void P107(Cpu *c) { prof_call(107, c); }
+static void P108(Cpu *c) { prof_call(108, c); }
+static void P109(Cpu *c) { prof_call(109, c); }
+static void P110(Cpu *c) { prof_call(110, c); }
+static void P111(Cpu *c) { prof_call(111, c); }
+static void P112(Cpu *c) { prof_call(112, c); }
+static void P113(Cpu *c) { prof_call(113, c); }
+static void P114(Cpu *c) { prof_call(114, c); }
+static void P115(Cpu *c) { prof_call(115, c); }
+static void P116(Cpu *c) { prof_call(116, c); }
+static void P117(Cpu *c) { prof_call(117, c); }
+static void P118(Cpu *c) { prof_call(118, c); }
+static void P119(Cpu *c) { prof_call(119, c); }
+static void P120(Cpu *c) { prof_call(120, c); }
+static void P121(Cpu *c) { prof_call(121, c); }
+static void P122(Cpu *c) { prof_call(122, c); }
+static void P123(Cpu *c) { prof_call(123, c); }
+static void P124(Cpu *c) { prof_call(124, c); }
+static void P125(Cpu *c) { prof_call(125, c); }
+static void P126(Cpu *c) { prof_call(126, c); }
+static void P127(Cpu *c) { prof_call(127, c); }
+static void P128(Cpu *c) { prof_call(128, c); }
+static void P129(Cpu *c) { prof_call(129, c); }
+static void P130(Cpu *c) { prof_call(130, c); }
+static void P131(Cpu *c) { prof_call(131, c); }
+static void P132(Cpu *c) { prof_call(132, c); }
+static void P133(Cpu *c) { prof_call(133, c); }
+static void P134(Cpu *c) { prof_call(134, c); }
+static void P135(Cpu *c) { prof_call(135, c); }
+static void P136(Cpu *c) { prof_call(136, c); }
+static void P137(Cpu *c) { prof_call(137, c); }
+static void P138(Cpu *c) { prof_call(138, c); }
+static void P139(Cpu *c) { prof_call(139, c); }
+static void P140(Cpu *c) { prof_call(140, c); }
+static void P141(Cpu *c) { prof_call(141, c); }
+static void P142(Cpu *c) { prof_call(142, c); }
+static void P143(Cpu *c) { prof_call(143, c); }
+static void P144(Cpu *c) { prof_call(144, c); }
+static void P145(Cpu *c) { prof_call(145, c); }
+static void P146(Cpu *c) { prof_call(146, c); }
+static void P147(Cpu *c) { prof_call(147, c); }
+static void P148(Cpu *c) { prof_call(148, c); }
+static void P149(Cpu *c) { prof_call(149, c); }
+static void P150(Cpu *c) { prof_call(150, c); }
+static void P151(Cpu *c) { prof_call(151, c); }
+static void P152(Cpu *c) { prof_call(152, c); }
+static void P153(Cpu *c) { prof_call(153, c); }
+static void P154(Cpu *c) { prof_call(154, c); }
+static void P155(Cpu *c) { prof_call(155, c); }
+static void P156(Cpu *c) { prof_call(156, c); }
+static void P157(Cpu *c) { prof_call(157, c); }
+static void P158(Cpu *c) { prof_call(158, c); }
+static void P159(Cpu *c) { prof_call(159, c); }
+static void P160(Cpu *c) { prof_call(160, c); }
+static void P161(Cpu *c) { prof_call(161, c); }
+static void P162(Cpu *c) { prof_call(162, c); }
+static void P163(Cpu *c) { prof_call(163, c); }
+static void P164(Cpu *c) { prof_call(164, c); }
+static void P165(Cpu *c) { prof_call(165, c); }
+static void P166(Cpu *c) { prof_call(166, c); }
+static void P167(Cpu *c) { prof_call(167, c); }
+static void P168(Cpu *c) { prof_call(168, c); }
+static void P169(Cpu *c) { prof_call(169, c); }
+static void P170(Cpu *c) { prof_call(170, c); }
+static void P171(Cpu *c) { prof_call(171, c); }
+static void P172(Cpu *c) { prof_call(172, c); }
+static void P173(Cpu *c) { prof_call(173, c); }
+static void P174(Cpu *c) { prof_call(174, c); }
+static void P175(Cpu *c) { prof_call(175, c); }
+static void P176(Cpu *c) { prof_call(176, c); }
+static void P177(Cpu *c) { prof_call(177, c); }
+static void P178(Cpu *c) { prof_call(178, c); }
+static void P179(Cpu *c) { prof_call(179, c); }
+static void P180(Cpu *c) { prof_call(180, c); }
+static void P181(Cpu *c) { prof_call(181, c); }
+static void P182(Cpu *c) { prof_call(182, c); }
+static void P183(Cpu *c) { prof_call(183, c); }
+static void P184(Cpu *c) { prof_call(184, c); }
+static void P185(Cpu *c) { prof_call(185, c); }
+static void P186(Cpu *c) { prof_call(186, c); }
+static void P187(Cpu *c) { prof_call(187, c); }
+static void P188(Cpu *c) { prof_call(188, c); }
+static void P189(Cpu *c) { prof_call(189, c); }
+static void P190(Cpu *c) { prof_call(190, c); }
+static void P191(Cpu *c) { prof_call(191, c); }
+static void P192(Cpu *c) { prof_call(192, c); }
+static void P193(Cpu *c) { prof_call(193, c); }
+static void P194(Cpu *c) { prof_call(194, c); }
+static void P195(Cpu *c) { prof_call(195, c); }
+static void P196(Cpu *c) { prof_call(196, c); }
+static void P197(Cpu *c) { prof_call(197, c); }
+static void P198(Cpu *c) { prof_call(198, c); }
+static void P199(Cpu *c) { prof_call(199, c); }
+static void P200(Cpu *c) { prof_call(200, c); }
+static void P201(Cpu *c) { prof_call(201, c); }
+static void P202(Cpu *c) { prof_call(202, c); }
+static void P203(Cpu *c) { prof_call(203, c); }
+static void P204(Cpu *c) { prof_call(204, c); }
+static void P205(Cpu *c) { prof_call(205, c); }
+static void P206(Cpu *c) { prof_call(206, c); }
+static void P207(Cpu *c) { prof_call(207, c); }
+static void P208(Cpu *c) { prof_call(208, c); }
+static void P209(Cpu *c) { prof_call(209, c); }
+static void P210(Cpu *c) { prof_call(210, c); }
+static void P211(Cpu *c) { prof_call(211, c); }
+static void P212(Cpu *c) { prof_call(212, c); }
+static void P213(Cpu *c) { prof_call(213, c); }
+static void P214(Cpu *c) { prof_call(214, c); }
+static void P215(Cpu *c) { prof_call(215, c); }
+static void P216(Cpu *c) { prof_call(216, c); }
+static void P217(Cpu *c) { prof_call(217, c); }
+static void P218(Cpu *c) { prof_call(218, c); }
+static void P219(Cpu *c) { prof_call(219, c); }
+static void P220(Cpu *c) { prof_call(220, c); }
+static void P221(Cpu *c) { prof_call(221, c); }
+static void P222(Cpu *c) { prof_call(222, c); }
+static void P223(Cpu *c) { prof_call(223, c); }
+static void P224(Cpu *c) { prof_call(224, c); }
+static void P225(Cpu *c) { prof_call(225, c); }
+static void P226(Cpu *c) { prof_call(226, c); }
+static void P227(Cpu *c) { prof_call(227, c); }
+static void P228(Cpu *c) { prof_call(228, c); }
+static void P229(Cpu *c) { prof_call(229, c); }
+static void P230(Cpu *c) { prof_call(230, c); }
+static void P231(Cpu *c) { prof_call(231, c); }
+static void P232(Cpu *c) { prof_call(232, c); }
+static void P233(Cpu *c) { prof_call(233, c); }
+static void P234(Cpu *c) { prof_call(234, c); }
+static void P235(Cpu *c) { prof_call(235, c); }
+static void P236(Cpu *c) { prof_call(236, c); }
+static void P237(Cpu *c) { prof_call(237, c); }
+static void P238(Cpu *c) { prof_call(238, c); }
+static void P239(Cpu *c) { prof_call(239, c); }
+static void P240(Cpu *c) { prof_call(240, c); }
+static void P241(Cpu *c) { prof_call(241, c); }
+static void P242(Cpu *c) { prof_call(242, c); }
+static void P243(Cpu *c) { prof_call(243, c); }
+static void P244(Cpu *c) { prof_call(244, c); }
+static void P245(Cpu *c) { prof_call(245, c); }
+static void P246(Cpu *c) { prof_call(246, c); }
+static void P247(Cpu *c) { prof_call(247, c); }
+static void P248(Cpu *c) { prof_call(248, c); }
+static void P249(Cpu *c) { prof_call(249, c); }
+static void P250(Cpu *c) { prof_call(250, c); }
+static void P251(Cpu *c) { prof_call(251, c); }
+static void P252(Cpu *c) { prof_call(252, c); }
+static void P253(Cpu *c) { prof_call(253, c); }
+static void P254(Cpu *c) { prof_call(254, c); }
+static void P255(Cpu *c) { prof_call(255, c); }
+static void P256(Cpu *c) { prof_call(256, c); }
+static void P257(Cpu *c) { prof_call(257, c); }
+static void P258(Cpu *c) { prof_call(258, c); }
+static void P259(Cpu *c) { prof_call(259, c); }
+static void P260(Cpu *c) { prof_call(260, c); }
+static void P261(Cpu *c) { prof_call(261, c); }
+static void P262(Cpu *c) { prof_call(262, c); }
+static void P263(Cpu *c) { prof_call(263, c); }
+static void P264(Cpu *c) { prof_call(264, c); }
+static void P265(Cpu *c) { prof_call(265, c); }
+static void P266(Cpu *c) { prof_call(266, c); }
+static void P267(Cpu *c) { prof_call(267, c); }
+static void P268(Cpu *c) { prof_call(268, c); }
+static void P269(Cpu *c) { prof_call(269, c); }
+static void P270(Cpu *c) { prof_call(270, c); }
+static void P271(Cpu *c) { prof_call(271, c); }
+static void P272(Cpu *c) { prof_call(272, c); }
+static void P273(Cpu *c) { prof_call(273, c); }
+static void P274(Cpu *c) { prof_call(274, c); }
+static void P275(Cpu *c) { prof_call(275, c); }
+static void P276(Cpu *c) { prof_call(276, c); }
+static void P277(Cpu *c) { prof_call(277, c); }
+static void P278(Cpu *c) { prof_call(278, c); }
+static void P279(Cpu *c) { prof_call(279, c); }
+static void P280(Cpu *c) { prof_call(280, c); }
+static void P281(Cpu *c) { prof_call(281, c); }
+static void P282(Cpu *c) { prof_call(282, c); }
+static void P283(Cpu *c) { prof_call(283, c); }
+static void P284(Cpu *c) { prof_call(284, c); }
+static void P285(Cpu *c) { prof_call(285, c); }
+static void P286(Cpu *c) { prof_call(286, c); }
+static void P287(Cpu *c) { prof_call(287, c); }
+static void P288(Cpu *c) { prof_call(288, c); }
+static void P289(Cpu *c) { prof_call(289, c); }
+static void P290(Cpu *c) { prof_call(290, c); }
+static void P291(Cpu *c) { prof_call(291, c); }
+static void P292(Cpu *c) { prof_call(292, c); }
+static void P293(Cpu *c) { prof_call(293, c); }
+static void P294(Cpu *c) { prof_call(294, c); }
+static void P295(Cpu *c) { prof_call(295, c); }
+static void P296(Cpu *c) { prof_call(296, c); }
+static void P297(Cpu *c) { prof_call(297, c); }
+static void P298(Cpu *c) { prof_call(298, c); }
+static void P299(Cpu *c) { prof_call(299, c); }
+static void P300(Cpu *c) { prof_call(300, c); }
+static void P301(Cpu *c) { prof_call(301, c); }
+static void P302(Cpu *c) { prof_call(302, c); }
+static void P303(Cpu *c) { prof_call(303, c); }
+static void P304(Cpu *c) { prof_call(304, c); }
+static void P305(Cpu *c) { prof_call(305, c); }
+static void P306(Cpu *c) { prof_call(306, c); }
+static void P307(Cpu *c) { prof_call(307, c); }
+static void P308(Cpu *c) { prof_call(308, c); }
+static void P309(Cpu *c) { prof_call(309, c); }
+static void P310(Cpu *c) { prof_call(310, c); }
+static void P311(Cpu *c) { prof_call(311, c); }
+static void P312(Cpu *c) { prof_call(312, c); }
+static void P313(Cpu *c) { prof_call(313, c); }
+static void P314(Cpu *c) { prof_call(314, c); }
+static void P315(Cpu *c) { prof_call(315, c); }
+static void P316(Cpu *c) { prof_call(316, c); }
+static void P317(Cpu *c) { prof_call(317, c); }
+static void P318(Cpu *c) { prof_call(318, c); }
+static void P319(Cpu *c) { prof_call(319, c); }
+static void P320(Cpu *c) { prof_call(320, c); }
+static void P321(Cpu *c) { prof_call(321, c); }
+static void P322(Cpu *c) { prof_call(322, c); }
+static void P323(Cpu *c) { prof_call(323, c); }
+static void P324(Cpu *c) { prof_call(324, c); }
+static void P325(Cpu *c) { prof_call(325, c); }
+static void P326(Cpu *c) { prof_call(326, c); }
+static void P327(Cpu *c) { prof_call(327, c); }
+static void P328(Cpu *c) { prof_call(328, c); }
+static void P329(Cpu *c) { prof_call(329, c); }
+static void P330(Cpu *c) { prof_call(330, c); }
+static void P331(Cpu *c) { prof_call(331, c); }
+static void P332(Cpu *c) { prof_call(332, c); }
+static void P333(Cpu *c) { prof_call(333, c); }
+static void P334(Cpu *c) { prof_call(334, c); }
+static void P335(Cpu *c) { prof_call(335, c); }
+static void P336(Cpu *c) { prof_call(336, c); }
+static void P337(Cpu *c) { prof_call(337, c); }
+static void P338(Cpu *c) { prof_call(338, c); }
+static void P339(Cpu *c) { prof_call(339, c); }
+static void P340(Cpu *c) { prof_call(340, c); }
+static void P341(Cpu *c) { prof_call(341, c); }
+static void P342(Cpu *c) { prof_call(342, c); }
+static void P343(Cpu *c) { prof_call(343, c); }
+static void P344(Cpu *c) { prof_call(344, c); }
+static void P345(Cpu *c) { prof_call(345, c); }
+static void P346(Cpu *c) { prof_call(346, c); }
+static void P347(Cpu *c) { prof_call(347, c); }
+static void P348(Cpu *c) { prof_call(348, c); }
+static void P349(Cpu *c) { prof_call(349, c); }
+static void P350(Cpu *c) { prof_call(350, c); }
+static void P351(Cpu *c) { prof_call(351, c); }
+static void P352(Cpu *c) { prof_call(352, c); }
+static void P353(Cpu *c) { prof_call(353, c); }
+static void P354(Cpu *c) { prof_call(354, c); }
+static void P355(Cpu *c) { prof_call(355, c); }
+static void P356(Cpu *c) { prof_call(356, c); }
+static void P357(Cpu *c) { prof_call(357, c); }
+static void P358(Cpu *c) { prof_call(358, c); }
+static void P359(Cpu *c) { prof_call(359, c); }
+static void P360(Cpu *c) { prof_call(360, c); }
+static void P361(Cpu *c) { prof_call(361, c); }
+static void P362(Cpu *c) { prof_call(362, c); }
+static void P363(Cpu *c) { prof_call(363, c); }
+static void P364(Cpu *c) { prof_call(364, c); }
+static void P365(Cpu *c) { prof_call(365, c); }
+static void P366(Cpu *c) { prof_call(366, c); }
+static void P367(Cpu *c) { prof_call(367, c); }
+static void P368(Cpu *c) { prof_call(368, c); }
+static void P369(Cpu *c) { prof_call(369, c); }
+static void P370(Cpu *c) { prof_call(370, c); }
+static void P371(Cpu *c) { prof_call(371, c); }
+static void P372(Cpu *c) { prof_call(372, c); }
+static void P373(Cpu *c) { prof_call(373, c); }
+static void P374(Cpu *c) { prof_call(374, c); }
+static void P375(Cpu *c) { prof_call(375, c); }
+static void P376(Cpu *c) { prof_call(376, c); }
+static void P377(Cpu *c) { prof_call(377, c); }
+static void P378(Cpu *c) { prof_call(378, c); }
+static void P379(Cpu *c) { prof_call(379, c); }
+static void P380(Cpu *c) { prof_call(380, c); }
+static void P381(Cpu *c) { prof_call(381, c); }
+static void P382(Cpu *c) { prof_call(382, c); }
+static void P383(Cpu *c) { prof_call(383, c); }
+static void P384(Cpu *c) { prof_call(384, c); }
+static void P385(Cpu *c) { prof_call(385, c); }
+static void P386(Cpu *c) { prof_call(386, c); }
+static void P387(Cpu *c) { prof_call(387, c); }
+static void P388(Cpu *c) { prof_call(388, c); }
+static void P389(Cpu *c) { prof_call(389, c); }
+static void P390(Cpu *c) { prof_call(390, c); }
+static void P391(Cpu *c) { prof_call(391, c); }
+static void P392(Cpu *c) { prof_call(392, c); }
+static void P393(Cpu *c) { prof_call(393, c); }
+static void P394(Cpu *c) { prof_call(394, c); }
+static void P395(Cpu *c) { prof_call(395, c); }
+static void P396(Cpu *c) { prof_call(396, c); }
+static void P397(Cpu *c) { prof_call(397, c); }
+static void P398(Cpu *c) { prof_call(398, c); }
+static void P399(Cpu *c) { prof_call(399, c); }
+static void P400(Cpu *c) { prof_call(400, c); }
+static void P401(Cpu *c) { prof_call(401, c); }
+static void P402(Cpu *c) { prof_call(402, c); }
+static void P403(Cpu *c) { prof_call(403, c); }
+static void P404(Cpu *c) { prof_call(404, c); }
+static void P405(Cpu *c) { prof_call(405, c); }
+static void P406(Cpu *c) { prof_call(406, c); }
+static void P407(Cpu *c) { prof_call(407, c); }
+static void P408(Cpu *c) { prof_call(408, c); }
+static void P409(Cpu *c) { prof_call(409, c); }
+static void P410(Cpu *c) { prof_call(410, c); }
+static void P411(Cpu *c) { prof_call(411, c); }
+static void P412(Cpu *c) { prof_call(412, c); }
+static void P413(Cpu *c) { prof_call(413, c); }
+static void P414(Cpu *c) { prof_call(414, c); }
+static void P415(Cpu *c) { prof_call(415, c); }
+static void P416(Cpu *c) { prof_call(416, c); }
+static void P417(Cpu *c) { prof_call(417, c); }
+static void P418(Cpu *c) { prof_call(418, c); }
+static void P419(Cpu *c) { prof_call(419, c); }
+static void P420(Cpu *c) { prof_call(420, c); }
+static void P421(Cpu *c) { prof_call(421, c); }
+static void P422(Cpu *c) { prof_call(422, c); }
+static void P423(Cpu *c) { prof_call(423, c); }
+static void P424(Cpu *c) { prof_call(424, c); }
+static void P425(Cpu *c) { prof_call(425, c); }
+static void P426(Cpu *c) { prof_call(426, c); }
+static void P427(Cpu *c) { prof_call(427, c); }
+static void P428(Cpu *c) { prof_call(428, c); }
+static void P429(Cpu *c) { prof_call(429, c); }
+static void P430(Cpu *c) { prof_call(430, c); }
+static void P431(Cpu *c) { prof_call(431, c); }
+static void P432(Cpu *c) { prof_call(432, c); }
+static void P433(Cpu *c) { prof_call(433, c); }
+static void P434(Cpu *c) { prof_call(434, c); }
+static void P435(Cpu *c) { prof_call(435, c); }
+static void P436(Cpu *c) { prof_call(436, c); }
+static void P437(Cpu *c) { prof_call(437, c); }
+static void P438(Cpu *c) { prof_call(438, c); }
+static void P439(Cpu *c) { prof_call(439, c); }
+static void P440(Cpu *c) { prof_call(440, c); }
+static void P441(Cpu *c) { prof_call(441, c); }
+static void P442(Cpu *c) { prof_call(442, c); }
+static void P443(Cpu *c) { prof_call(443, c); }
+static void P444(Cpu *c) { prof_call(444, c); }
+static void P445(Cpu *c) { prof_call(445, c); }
+static void P446(Cpu *c) { prof_call(446, c); }
+static void P447(Cpu *c) { prof_call(447, c); }
+static const HostFn g_prof_wrap[NVN_PROF_SLOTS] = {
+    P0, P1, P2, P3, P4, P5, P6, P7,
+    P8, P9, P10, P11, P12, P13, P14, P15,
+    P16, P17, P18, P19, P20, P21, P22, P23,
+    P24, P25, P26, P27, P28, P29, P30, P31,
+    P32, P33, P34, P35, P36, P37, P38, P39,
+    P40, P41, P42, P43, P44, P45, P46, P47,
+    P48, P49, P50, P51, P52, P53, P54, P55,
+    P56, P57, P58, P59, P60, P61, P62, P63,
+    P64, P65, P66, P67, P68, P69, P70, P71,
+    P72, P73, P74, P75, P76, P77, P78, P79,
+    P80, P81, P82, P83, P84, P85, P86, P87,
+    P88, P89, P90, P91, P92, P93, P94, P95,
+    P96, P97, P98, P99, P100, P101, P102, P103,
+    P104, P105, P106, P107, P108, P109, P110, P111,
+    P112, P113, P114, P115, P116, P117, P118, P119,
+    P120, P121, P122, P123, P124, P125, P126, P127,
+    P128, P129, P130, P131, P132, P133, P134, P135,
+    P136, P137, P138, P139, P140, P141, P142, P143,
+    P144, P145, P146, P147, P148, P149, P150, P151,
+    P152, P153, P154, P155, P156, P157, P158, P159,
+    P160, P161, P162, P163, P164, P165, P166, P167,
+    P168, P169, P170, P171, P172, P173, P174, P175,
+    P176, P177, P178, P179, P180, P181, P182, P183,
+    P184, P185, P186, P187, P188, P189, P190, P191,
+    P192, P193, P194, P195, P196, P197, P198, P199,
+    P200, P201, P202, P203, P204, P205, P206, P207,
+    P208, P209, P210, P211, P212, P213, P214, P215,
+    P216, P217, P218, P219, P220, P221, P222, P223,
+    P224, P225, P226, P227, P228, P229, P230, P231,
+    P232, P233, P234, P235, P236, P237, P238, P239,
+    P240, P241, P242, P243, P244, P245, P246, P247,
+    P248, P249, P250, P251, P252, P253, P254, P255,
+    P256, P257, P258, P259, P260, P261, P262, P263,
+    P264, P265, P266, P267, P268, P269, P270, P271,
+    P272, P273, P274, P275, P276, P277, P278, P279,
+    P280, P281, P282, P283, P284, P285, P286, P287,
+    P288, P289, P290, P291, P292, P293, P294, P295,
+    P296, P297, P298, P299, P300, P301, P302, P303,
+    P304, P305, P306, P307, P308, P309, P310, P311,
+    P312, P313, P314, P315, P316, P317, P318, P319,
+    P320, P321, P322, P323, P324, P325, P326, P327,
+    P328, P329, P330, P331, P332, P333, P334, P335,
+    P336, P337, P338, P339, P340, P341, P342, P343,
+    P344, P345, P346, P347, P348, P349, P350, P351,
+    P352, P353, P354, P355, P356, P357, P358, P359,
+    P360, P361, P362, P363, P364, P365, P366, P367,
+    P368, P369, P370, P371, P372, P373, P374, P375,
+    P376, P377, P378, P379, P380, P381, P382, P383,
+    P384, P385, P386, P387, P388, P389, P390, P391,
+    P392, P393, P394, P395, P396, P397, P398, P399,
+    P400, P401, P402, P403, P404, P405, P406, P407,
+    P408, P409, P410, P411, P412, P413, P414, P415,
+    P416, P417, P418, P419, P420, P421, P422, P423,
+    P424, P425, P426, P427, P428, P429, P430, P431,
+    P432, P433, P434, P435, P436, P437, P438, P439,
+    P440, P441, P442, P443, P444, P445, P446, P447,
+};

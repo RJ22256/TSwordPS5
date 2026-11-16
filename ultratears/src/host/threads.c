@@ -1019,6 +1019,8 @@ uint32_t svc_thread_main_init(void) {
 
 static _Atomic uint64_t g_main_yield_n, g_main_yield_ns;   // 只有客体主线程写；诊断行在同一线程读 | Written only by the guest main thread; the diagnostic line reads it on the same thread
 void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = g_main_yield_n; *ns = g_main_yield_ns; }
+// TSword: is the calling thread the game's main thread? (the graphics-call profile, gfx/nvn/nvn_registry.c)
+int runtime_on_main_thread(void) { return t_self && t_self == g_main_thr; }
 
 // ---------- 同步对象 ----------
 // ---------- Synchronization objects ----------
