@@ -2805,8 +2805,15 @@ static void ft_report(void) {
     memcpy(g_ft.play, play, sizeof play); memcpy(g_ft.playf, playf, sizeof playf);   // (frames whose GPU time is still to come)
 }
 // a frame's present (fr: since the last one, nv: the game thread's graphics calls, slot: its wait for the display slot)
+__attribute__((weak)) uint64_t vkb_draws_total(void) { return 0; }   // (backend_vk.c; 0 without it)
 static void ft_frame(uint64_t f, double fr, double nv, double slot, uint64_t draws, int loadscreen, int interval, const double thr[9]) {
     if (!ft_on()) return;
+    {   /* the draws as the Vulkan backend executed them: mtl_stats is the null backend's (always 0) on the PS5 and Windows,
+           which counted every frame as a menu in 0.5.6. They're counted where the frames are replayed, a frame or so behind
+           the game's present: fine for telling the world (thousands a frame) from the title, menus and loading. */
+        static uint64_t prev; uint64_t t = vkb_draws_total();
+        if (t) { draws = t >= prev ? t - prev : 0; prev = t; }
+    }
     int play = draws > 1500 && !loadscreen && fr > 0 && fr < 1000;
     g_ft.play[f % LFN] = (unsigned char)play; g_ft.playf[f % LFN] = f;
     if (!g_ft.t0) g_ft.t0 = now_ns();

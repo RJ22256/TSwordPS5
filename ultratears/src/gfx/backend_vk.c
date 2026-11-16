@@ -1428,6 +1428,8 @@ static int g_nslots, g_cur = -1;
 static post_op *g_post;
 static int g_npost, g_capost;
 static uint64_t g_op_count[OP_COUNT_];
+// TSword: the draws executed so far (plain and indexed), for the [frametime] line's gameplay test (nvn/hle_nvn.c ft_frame)
+uint64_t vkb_draws_total(void) { return *(volatile uint64_t *)&g_op_count[OP_DRAW] + *(volatile uint64_t *)&g_op_count[OP_DRAW_IDX]; }
 static int g_op_said[OP_COUNT_];
 
 typedef struct job { uint64_t fence; post_op *ops; int n; int slot; uint64_t *wb; int nwb; struct job *next; struct wb_snap_s *snaps; int nsnaps;
