@@ -64,10 +64,11 @@ const Choice k_overlay[] = {{"", "Off"}, {"fps", "FPS"}, {"full", "Full"}};
 const Choice k_fg[] = {{"", "Off"}, {"2", "2x"}, {"3", "3x"}, {"4", "4x"}};
 const Choice k_speed[] = {{"safe", "Safe"}, {"", "Balanced"}, {"full", "Full"}};
 const Choice k_preempt[] = {{"", "Off"}, {"1", "On (experimental)"}};
+const Choice k_maxiv[] = {{"", "On (the game's)"}, {"1", "Off"}};
 template <size_t N> constexpr int count(const Choice (&)[N]) { return (int)N; }
 
 struct Setting { const char *key; const Choice *opts; int n, def; bool live; int start, cur; };
-enum { S_RES, S_SCALE, S_FPS, S_UPSCALE, S_AA, S_SHARP, S_LAYOUT, S_OVERLAY, S_FG, S_SPEED, S_PREEMPT, S_COUNT };
+enum { S_RES, S_SCALE, S_FPS, S_UPSCALE, S_AA, S_SHARP, S_LAYOUT, S_OVERLAY, S_FG, S_SPEED, S_PREEMPT, S_MAXIV, S_COUNT };
 Setting g_set[S_COUNT] = {
     {"resolution", k_res, count(k_res), 0, false, 0, 0},
     {"scale", k_scale, count(k_scale), 4, false, 0, 0},
@@ -80,6 +81,7 @@ Setting g_set[S_COUNT] = {
     {"framegen", k_fg, count(k_fg), 0, true, 0, 0},
     {"speedups", k_speed, count(k_speed), 1, false, 0, 0},
     {"TOTK_ASYNC_PREEMPT", k_preempt, count(k_preempt), 0, false, 0, 0},
+    {"TOTK_MAX_INTERVAL", k_maxiv, count(k_maxiv), 0, false, 0, 0},
 };
 std::atomic<int> g_overlay_mode{0}, g_fg_mode{0};   // (read by other threads: the overlay, frame generation)
 
@@ -132,7 +134,7 @@ void setting_store(int which, int v) {
 std::string pending_restart(void) {
     std::string t;
     static const char *const names[S_COUNT] = {"resolution", "3D resolution", "frame rate", "upscaler", "anti-aliasing",
-                                               "sharpness", "button layout", "", "", "speed-ups", "thread preemption"};
+                                               "sharpness", "button layout", "", "", "speed-ups", "thread preemption", "drop to 30 when slow"};
     for (int i = 0; i < S_COUNT; i++)
         if (!g_set[i].live && g_set[i].cur != g_set[i].start) t += (t.empty() ? "" : ", ") + std::string(names[i]);
     return t;
@@ -651,6 +653,10 @@ void page_performance(float rs) {
                "thread takes a core at once instead of waiting for the one on it to stop (a long wait is a hitch: up "
                "to 125 ms in the 0.5.1 log). Experimental: TSword 0.4.2-0.4.5 froze with it on (other faults were "
                "found since). If the console freezes, set it off. Applies at the next start.");
+    choice_row(S_MAXIV, "Drop to 30 when slow", "On, as the game does: when its own work takes longer than a 60 fps "
+               "frame (16.7 ms), the game shows each frame twice - 30 fps - until it's quicker again. Off: it never drops "
+               "to 30 and runs as fast as it can, 40 or 50 fps where 30 was all it showed, the game's speed still right. "
+               "Uneven on a 60 Hz TV, smoother on a 120 Hz one. Applies at the next start.");
     opt_section("Overlay");
     choice_row(S_OVERLAY, "Performance overlay", "Top right: the frame rate (FPS), or everything (Full) - the CPU, the "
                "temperatures, memory, the frame times and the resolution. Applies at once.");

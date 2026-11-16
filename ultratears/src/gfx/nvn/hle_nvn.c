@@ -2773,6 +2773,59 @@ void nvn_gpu_recent(double *avg, double *p95, unsigned *n) {
     qsort(v, c, sizeof *v, dcmp); *n = c; *avg = c ? s / c : -1; *p95 = c ? v[(c * 95) / 100 < c ? (c * 95) / 100 : c - 1] : -1;
 }
 static int dcmp(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return (x > y) - (x < y); }
+/* TSword: the gameplay frame-time line ([frametime], on unless TOTK_FRAMETIME=0): 300 frames at a time of the game
+   drawing the world - over 1500 draws and no loading screen; the title, menus without the world and loading are left out
+   - with the time each one is on screen, the game's own work (system object +0x118, what its present-interval controller
+   reads), how often that controller held the game to 30 (interval 2 or more), the GPU's time, the game thread's
+   graphics calls, its wait for the display slot and its main thread's time on / waiting for its core. Which of them
+   fills the frame says where the frame rate goes. */
+#define FTN 300
+static struct { double fr[FTN], work[FTN], gpu[FTN], nv[FTN]; unsigned n, ngpu, nwork, held, over, skipped; double slot, on_core, core_wait, blocked;
+                uint64_t t0; unsigned char play[LFN]; uint64_t playf[LFN]; } g_ft;
+static int ft_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_FRAMETIME"); v = !(e && !strcmp(e, "0")); } return v; }
+static double ft_pct(double *v, unsigned n, unsigned p) { return n ? v[(n * p) / 100 < n ? (n * p) / 100 : n - 1] : -1; }
+static void ft_report(void) {
+    unsigned n = g_ft.n; if (!n) return;
+    double fr[FTN], wk[FTN], gp[FTN], nv[FTN], sum = 0;
+    memcpy(fr, g_ft.fr, n * sizeof *fr); memcpy(nv, g_ft.nv, n * sizeof *nv); memcpy(wk, g_ft.work, g_ft.nwork * sizeof *wk); memcpy(gp, g_ft.gpu, g_ft.ngpu * sizeof *gp);
+    for (unsigned i = 0; i < n; i++) sum += fr[i];
+    qsort(fr, n, sizeof *fr, dcmp); qsort(nv, n, sizeof *nv, dcmp); qsort(wk, g_ft.nwork, sizeof *wk, dcmp); qsort(gp, g_ft.ngpu, sizeof *gp, dcmp);
+    char work[160] = "the game's work not read", gpu[96] = "GPU not read";
+    if (g_ft.nwork) snprintf(work, sizeof work, "the game's work p50 %.1f / p90 %.1f / max %.1f ms, over 16.7 ms in %.0f%% of frames",
+                             ft_pct(wk, g_ft.nwork, 50), ft_pct(wk, g_ft.nwork, 90), wk[g_ft.nwork - 1], 100.0 * g_ft.over / g_ft.nwork);
+    if (g_ft.ngpu) snprintf(gpu, sizeof gpu, "GPU p50 %.1f / p90 %.1f ms", ft_pct(gp, g_ft.ngpu, 50), ft_pct(gp, g_ft.ngpu, 90));
+    LOG("[frametime] gameplay, %u frames (%u menu / loading frames left out) in %.1f s: %.1f fps, frame on screen p50 %.1f / p90 %.1f / max %.1f ms; "
+        "%s; held at 30 by the game in %.0f%% of frames; %s; game thread's graphics calls p50 %.1f ms; per frame: display-slot wait %.1f ms, "
+        "main thread on its core %.1f ms, waiting for a core %.1f ms, blocked %.1f ms",
+        n, g_ft.skipped, (now_ns() - g_ft.t0) / 1e9, sum > 0 ? n * 1000.0 / sum : 0, ft_pct(fr, n, 50), ft_pct(fr, n, 90), fr[n - 1],
+        work, 100.0 * g_ft.held / n, gpu, ft_pct(nv, n, 50), g_ft.slot / n, g_ft.on_core / n, g_ft.core_wait / n, g_ft.blocked / n);
+    uint64_t t = now_ns();
+    unsigned char play[LFN]; uint64_t playf[LFN]; memcpy(play, g_ft.play, sizeof play); memcpy(playf, g_ft.playf, sizeof playf);
+    memset(&g_ft, 0, sizeof g_ft); g_ft.t0 = t;
+    memcpy(g_ft.play, play, sizeof play); memcpy(g_ft.playf, playf, sizeof playf);   // (frames whose GPU time is still to come)
+}
+// a frame's present (fr: since the last one, nv: the game thread's graphics calls, slot: its wait for the display slot)
+static void ft_frame(uint64_t f, double fr, double nv, double slot, uint64_t draws, int loadscreen, int interval, const double thr[9]) {
+    if (!ft_on()) return;
+    int play = draws > 1500 && !loadscreen && fr > 0 && fr < 1000;
+    g_ft.play[f % LFN] = (unsigned char)play; g_ft.playf[f % LFN] = f;
+    if (!g_ft.t0) g_ft.t0 = now_ns();
+    if (!play) { g_ft.skipped++; return; }
+    unsigned i = g_ft.n++;
+    g_ft.fr[i] = fr; g_ft.nv[i] = nv; g_ft.slot += slot;
+    g_ft.on_core += thr[1]; g_ft.core_wait += thr[2]; g_ft.blocked += thr[3] + thr[4] + thr[5] + thr[6];
+    g_ft.held += interval >= 2;
+    if (g_game_sys) {   // (loading frames leave the frame start unset: an absolute tick, out of range)
+        double ms = *(volatile int64_t *)(uintptr_t)(g_game_sys + 0x118) / 19200.0;
+        if (ms >= 0 && ms < 1000) { g_ft.work[g_ft.nwork++] = ms; g_ft.over += ms > 16.7; }
+    }
+    if (g_ft.n >= FTN) ft_report();
+}
+// the GPU's time of frame f, 8 frames late
+static void ft_gpu(uint64_t f, double ms) {
+    if (!ft_on() || ms < 0 || g_ft.playf[f % LFN] != f || !g_ft.play[f % LFN] || g_ft.ngpu >= FTN) return;
+    g_ft.gpu[g_ft.ngpu++] = ms;
+}
 static void tsummary(uint64_t frame) {
     char line[1024]; size_t o = 0;
     for (int k = 0; k < 6; k++) {
@@ -3246,13 +3299,14 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
             for (int k = 0; k < 8; k++) r->thr[k] = th[k] >= pth[k] ? (th[k] - pth[k]) / 1e6 : 0, pth[k] = th[k];
             r->thr[8] = th[8] / 1e6;   // (the longest wait itself, not a total)
         }
+        ft_frame(f, fr, nv, g_acq_wait_ns / 1e6, dr - prev_draw, g_lf[f % LFN].ls, o->interval, g_lf[f % LFN].thr);   // TSword: [frametime]
         plib = lib_; ppso = pso_;
         trow(f, "@t_s", (now_ns() - g_t0_ns) / 1e9);
         trow(f, "@drawable_ms", mtl_drawable_ns_take() / 1e6);
         trow(f, "@sub_wall_ms", atomic_exchange(&g_sub_wall_ns, 0) / 1e6); trow(f, "@sub_cpu_ms", atomic_exchange(&g_sub_cpu_ns, 0) / 1e6); trow(f, "@sub_instr", (double)atomic_exchange(&g_sub_instr, 0));
     } else atomic_store(&g_nvn_ns, 0);
     g_acq_wait_ns = g_pq_wait_ns = 0;
-    if (f >= 8) { double g = mtl_gpu_ms(f - 8); if (g >= 0) { tpush(3, g); trow(f - 8, "@gpu_ms", g); g_hr[g_hn++ % HRN] = g; }   // GPU 时间滞后 8 帧取（已完成） | GPU time is taken 8 frames late (already completed)
+    if (f >= 8) { double g = mtl_gpu_ms(f - 8); if (g >= 0) { tpush(3, g); trow(f - 8, "@gpu_ms", g); g_hr[g_hn++ % HRN] = g; ft_gpu(f - 8, g); }   // GPU 时间滞后 8 帧取（已完成） | GPU time is taken 8 frames late (already completed)
         { lf_rec *r = &g_lf[(f - 8) % LFN];   // 长帧日志（缺省开，DM_LONGFRAME=0 关）：整帧 > 20 ms 或 GPU > 16.7 ms、且明显高于近况，才打一行 | long-frame log (on by default, DM_LONGFRAME=0 turns it off): a line is printed only when the whole frame > 20 ms or GPU > 16.7 ms, and it is clearly above recent conditions
           static int on = -1; if (on < 0) { const char *e = getenv("DM_LONGFRAME"); on = !(e && !strcmp(e, "0")); }
           // 「长」是相对近况说的：稳定跑在 30 帧（菜单 / 无窗口宿主）或持续过载时每帧都 > 20 ms，那不是长帧，不刷屏——要比近 16 帧的滑动均值高出四成才算
